@@ -76,9 +76,14 @@ app.post('/verify-payment', async (req, res) => {
     const orderRef = await db.collection('orders').add({
       userId: orderData.userId,
       courierId: orderData.courierId,
-
+      customerEmail: orderData.customerEmail,
+      courierName: orderData.courierName,
       pickup: orderData.pickup,
       dropoff: orderData.dropoff,
+      paymentReference: reference,
+      paymentProvider: 'paystack',
+      paymentStatus: 'paid',
+      packageSize:orderData.packageSize,
 
       pickupCoords: orderData.pickupCoords || null,
       dropoffCoords: orderData.dropoffCoords || null,
@@ -93,10 +98,32 @@ app.post('/verify-payment', async (req, res) => {
       createdAt: new Date()
     });
 
-    // 6️⃣ MARK COURIER AS BUSY
-    await courierRef.update({
-      available: false
+    // SAVE TRANSACTION
+    await db.collection ('transactions') .add({
+      orderId: orderRef.id,
+      courierId: orderData.courierId,
+      customerId: orderData.userId,
+      amount: price,
+      platformfee,
+      driverEarning,
+      paymentReference: reference,
+      createdAt: new Date()
     });
+
+    // 6️⃣ MARK COURIER AS BUSY
+    // await courierRef.update({
+    //  available: false
+   // });
+
+   await courierRef.update({
+
+    walletBalance: admin.firestore.FieldValue.increment(driverEarning),
+
+    totalEarned: admin.firestore.FieldValue.increment(driverEarning),
+
+    totalDeliveries: admin.firestore.FieldValue.increment(1)
+   });
+   
 
     // 7️⃣ SEND PUSH NOTIFICATION
     const courier = courierSnap.data();
