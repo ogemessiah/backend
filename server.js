@@ -84,6 +84,8 @@ app.post('/verify-payment', async (req, res) => {
       paymentProvider: 'paystack',
       paymentStatus: 'paid',
       packageSize:orderData.packageSize,
+      customerName: orderData.customerName,
+      customerPhone: orderData.customerPhone,
 
       pickupCoords: orderData.pickupCoords || null,
       dropoffCoords: orderData.dropoffCoords || null,
