@@ -12,8 +12,6 @@ const {
 const router =
   express.Router();
 
-const express = require('express');
-const router = express.Router();
 
 router.get('/', (req, res) => {
   res.json({
@@ -22,7 +20,6 @@ router.get('/', (req, res) => {
   });
 });
 
-module.exports = router;
 
 // =========================
 // VERIFY PAYMENT
