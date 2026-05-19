@@ -4,143 +4,92 @@ const express =
 const axios =
   require('axios');
 
+const {
+  admin,
+  db
+} = require('../firebaseAdmin');
+
 const router =
   express.Router();
 
-const {
-  db,
-  admin
-} = require('../firebaseAdmin');
+// =========================
+// VERIFY PAYMENT
+// =========================
 
 router.post(
   '/verify-payment',
+
   async (req, res) => {
 
     try {
 
       const {
-
         reference,
-
-        pickup,
-
-        dropoff,
-
-        courierId,
-
-        courierName,
-
-        packageSize,
-
-        distanceKm,
-
-        price,
-
-        driverEarning,
-
-        platformFee,
-
-        customerId,
-
-        customerEmail
-
+        orderData
       } = req.body;
 
-      // ✅ VERIFY WITH PAYSTACK
-      const response =
+      // =========================
+      // VERIFY WITH PAYSTACK
+      // =========================
+
+      const verify =
         await axios.get(
 
           `https://api.paystack.co/transaction/verify/${reference}`,
 
           {
-
             headers: {
-
               Authorization:
                 `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
             }
           }
         );
 
-      const data =
-        response.data.data;
+      const payment =
+        verify.data.data;
 
-      // ✅ CHECK PAYMENT SUCCESS
+      // PAYMENT FAILED
       if (
-        data.status !==
+        payment.status !==
         'success'
       ) {
 
-        return res.status(400)
-          .json({
+        return res.status(400).json({
 
-            error:
-              'Payment not successful'
-          });
+          success: false,
+
+          error:
+            'Payment not successful'
+        });
       }
 
-      // ✅ CREATE ORDER
+      // =========================
+      // PRICE
+      // =========================
+
+      const basePrice =
+        Number(orderData.price);
+
+      // 5% + 500
+      const platformFee =
+
+        Math.floor(
+          basePrice * 0.05
+        ) + 500;
+
+      const driverEarning =
+
+        basePrice -
+        platformFee;
+
+      // =========================
+      // CREATE ORDER
+      // =========================
+
       const orderRef =
-        await db
-          .collection('orders')
-          .add({
+        await db.collection('orders').add({
 
-            customerId,
-
-            customerEmail,
-
-            pickup,
-
-            dropoff,
-
-            courierId,
-
-            courierName,
-
-            packageSize,
-
-            distanceKm,
-
-            price,
-
-            driverEarning,
-
-            platformFee,
-
-            paymentReference:
-              reference,
-
-            paymentProvider:
-              'paystack',
-
-            paymentStatus:
-              'paid',
-
-            status:
-              'pending',
-
-            createdAt:
-              admin.firestore
-                .FieldValue
-                .serverTimestamp()
-          });
-
-      // ✅ CREATE TRANSACTION
-      await db
-        .collection(
-          'transactions'
-        )
-        .add({
-
-          orderId:
-            orderRef.id,
-
-          customerId,
-
-          courierId,
-
-          amount:
-            price,
+          ...orderData,
 
           driverEarning,
 
@@ -149,13 +98,66 @@ router.post(
           paymentReference:
             reference,
 
+          paymentStatus:
+            'paid',
+
+          status:
+            'assigned',
+
           createdAt:
-            admin.firestore
-              .FieldValue
-              .serverTimestamp()
+            admin.firestore.FieldValue.serverTimestamp()
         });
 
-      res.json({
+      // =========================
+      // UPDATE DRIVER
+      // =========================
+
+      const courierRef =
+        db.collection(
+          'couriers_live'
+        ).doc(
+          orderData.courierId
+        );
+
+      const courierSnap =
+        await courierRef.get();
+
+      if (courierSnap.exists) {
+
+        const courierData =
+          courierSnap.data();
+
+        await courierRef.update({
+
+          walletBalance:
+
+            Number(
+              courierData.walletBalance || 0
+            ) +
+
+            driverEarning,
+
+          totalEarned:
+
+            Number(
+              courierData.totalEarned || 0
+            ) +
+
+            driverEarning,
+
+          totalDeliveries:
+
+            Number(
+              courierData.totalDeliveries || 0
+            ) + 1
+        });
+      }
+
+      // =========================
+      // SUCCESS
+      // =========================
+
+      return res.json({
 
         success: true,
 
@@ -167,12 +169,13 @@ router.post(
 
       console.log(error);
 
-      res.status(500)
-        .json({
+      return res.status(500).json({
 
-          error:
-            error.message
-        });
+        success: false,
+
+        error:
+          error.message
+      });
     }
   }
 );
