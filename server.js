@@ -23,6 +23,16 @@ app.get('/', (req, res) => {
   res.send('API running 🚀');
 });
 
+app.post('/distance', async (req, res) => {
+  const {pickupCoords, dropoffCoords} = req.body;
+  const url =
+    `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${pickupCoords.lat},${pickupCoords.lng}&destinations=${dropoffCoords.lat},${dropoffCoords.lng}&key=${process.env.GOOGLE_API_KEY}`;
+  const response = await fetch(url);
+  const data = await response.json();
+  res.json(data);  
+}
+);
+
 // =========================
 // START SERVER
 // =========================
