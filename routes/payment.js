@@ -88,6 +88,7 @@ router.post('/verify-payment', async (req, res) => {
       paymentReference: reference,
       paymentStatus: 'paid',
       status: 'assigned',
+      reviewSubmitted: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
