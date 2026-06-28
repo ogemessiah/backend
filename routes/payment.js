@@ -185,60 +185,6 @@ router.post('/updateCourierRating', async (req, res) => {
 
 });
 
-router.get('/migrateCourierRatings', async (req, res) => {
 
-  try {
-
-    const couriers = await db
-      .collection('couriers_live')
-      .get();
-
-    for (const courier of couriers.docs) {
-
-      const courierId = courier.id;
-
-      const reviews = await db
-        .collection('courier_reviews')
-        .where('courierId', '==', courierId)
-        .get();
-
-      let totalReviews = reviews.size;
-      let totalRating = 0;
-
-      reviews.forEach(doc => {
-        totalRating += Number(doc.data().rating || 0);
-      });
-
-      const averageRating =
-        totalReviews > 0
-          ? Number((totalRating / totalReviews).toFixed(1))
-          : 0;
-
-      await db
-        .collection('couriers_live')
-        .doc(courierId)
-        .update({
-          averageRating,
-          totalReviews
-        });
-    }
-
-    res.json({
-      success: true,
-      message: 'Migration complete'
-    });
-
-  } catch (err) {
-
-    console.error(err);
-
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
-
-  }
-
-});
 
 module.exports = router;
