@@ -23,6 +23,77 @@ app.get('/', (req, res) => {
   res.send('API running 🚀');
 });
 
+app.get('/migrateCourierRatings', async (req, res) => {
+
+  try {
+
+    // Get every courier
+    const couriersSnapshot = await db
+      .collection('couriers_live')
+      .get();
+
+    let updated = 0;
+
+    for (const courierDoc of couriersSnapshot.docs) {
+
+      const courierId = courierDoc.id;
+
+      // Get all reviews for this courier
+      const reviewsSnapshot = await db
+        .collection('courier_reviews')
+        .where('courierId', '==', courierId)
+        .get();
+
+      const totalReviews = reviewsSnapshot.size;
+
+      let totalRating = 0;
+
+      reviewsSnapshot.forEach(reviewDoc => {
+        totalRating += Number(reviewDoc.data().rating || 0);
+      });
+
+      const averageRating =
+        totalReviews > 0
+          ? Number((totalRating / totalReviews).toFixed(1))
+          : 0;
+
+      // Update courier document
+      await db
+        .collection('couriers_live')
+        .doc(courierId)
+        .update({
+
+          averageRating,
+          totalReviews
+
+        });
+
+      updated++;
+
+    }
+
+    return res.json({
+
+      success: true,
+      message: `Updated ${updated} couriers.`
+
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    return res.status(500).json({
+
+      success: false,
+      message: error.message
+
+    });
+
+  }
+
+});
+
 app.post('/distance', async (req, res) => {
   const {pickupCoords, dropoffCoords} = req.body;
   const url =
