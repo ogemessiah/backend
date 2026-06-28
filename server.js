@@ -33,6 +33,68 @@ app.post('/distance', async (req, res) => {
 }
 );
 
+app.post('/updateCourierRating', async (req, res) => {
+
+  try {
+
+    const { courierId } = req.body;
+
+    if (!courierId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing courierId'
+      });
+    }
+
+    // Get all reviews for this courier
+    const reviewsSnapshot = await db
+      .collection('courier_reviews')
+      .where('courierId', '==', courierId)
+      .get();
+
+    let totalReviews = reviewsSnapshot.size;
+    let totalRating = 0;
+
+    reviewsSnapshot.forEach(doc => {
+      totalRating += Number(doc.data().rating || 0);
+    });
+
+    const averageRating =
+      totalReviews > 0
+        ? Number((totalRating / totalReviews).toFixed(1))
+        : 0;
+
+    // Update courier profile
+    await db
+      .collection('couriers_live')
+      .doc(courierId)
+      .update({
+
+        averageRating,
+
+        totalReviews
+
+      });
+
+    return res.json({
+      success: true,
+      averageRating,
+      totalReviews
+    });
+
+  } catch (err) {
+
+    console.error(err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+
+});
+
 // =========================
 // START SERVER
 // =========================
