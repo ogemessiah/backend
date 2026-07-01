@@ -66,23 +66,120 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     // CALCULATE FEES
     // =========================
-    const basePrice = Number(orderData.price || 0);
+    const originalPrice = Number(orderData.originalPrice || 0);
 
-    if (!basePrice) {
+    let finalPrice = originalPrice;
+
+    if (orderData.voucherCode) {
+
+      const voucherSnap = await db
+        .collection('vouchers')
+        .doc(orderData.voucherCode)
+        .get();
+
+      if (!voucherSnap.exists) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid voucher'
+        });
+      }
+
+      const voucher = voucherSnap.data();
+
+      if (!voucher.active) {
+        return res.status(400).json({
+          success: false,
+          error: 'Voucher is inactive'
+        });
+      }
+
+      if (voucher.expiry.toDate() < new Date()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Voucher has expired'
+        });
+      }
+
+      if (voucher.maxUses && voucher.timesUsed >= voucher.maxUses) {
+        return res.status(400).json({
+          success: false,
+          error: 'Voucher usage limit reached'
+        });
+      }
+
+      if (originalPrice < voucher.minimumOrder) {
+        return res.status(400).json({
+          success: false,
+          error: 'Order does not meet minimum amount'
+        });
+      }
+
+      // First order check
+      const userSnap = await db
+        .collection('users')
+        .doc(orderData.userId)
+        .get();
+
+      const user = userSnap.data();
+
+      if (
+        voucher.firstTimeOnly &&
+        user?.hasPlacedFirstOrder
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: 'Voucher only valid for first order'
+        });
+      }
+
+      // Calculate discount
+      if (voucher.type === 'fixed') {
+
+        finalPrice = Math.max(
+          originalPrice - voucher.value,
+          0
+        );
+
+      } else {
+
+        let amountOff = originalPrice * (voucher.value / 100);
+
+        if (
+          voucher.maximumDiscount &&
+          amountOff > voucher.maximumDiscount
+        ) {
+          amountOff = voucher.maximumDiscount;
+        }
+        finalPrice = Math.max(originalPrice - amountOff, 0);
+
+      }
+
+    }
+    
+    const customerPays = Number(payment.amount) / 100;
+
+    const platformFee = Math.floor(originalPrice * 0.05) + 500;
+    const driverEarning = originalPrice - platformFee;
+
+    const voucherCost = originalPrice - finalPrice;
+
+    
+
+    if (Math.abs(customerPays - finalPrice) > 0.01) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid price in orderData'
+        error: 'Payment amount mismatch'
       });
     }
-
-    const platformFee = Math.floor(basePrice * 0.05) + 500;
-    const driverEarning = basePrice - platformFee;
 
     // =========================
     // CREATE ORDER
     // =========================
     const orderRef = await db.collection('orders').add({
       ...orderData,
+      originalPrice,
+      amountPaid: customerPays,
+      voucherDiscount: voucherCost,
       driverEarning,
       platformFee,
       paymentReference: reference,
@@ -104,6 +201,16 @@ router.post('/verify-payment', async (req, res) => {
             merge: true
           }
         );
+    }
+
+    if (orderData.voucherCode) {
+      await db
+        .collection('vouchers')
+        .doc(orderData.voucherCode)
+        .update({
+          timesUsed:
+            admin.firestore.FieldValue.increment(1)
+        });
     }
 
     // =========================
