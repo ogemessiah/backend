@@ -92,6 +92,20 @@ router.post('/verify-payment', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    if (orderData.userId) {
+      await db
+        .collection('users')
+        .doc(orderData.userId)
+        .set(
+          {
+            hasPlacedFirstOrder: true
+          },
+          {
+            merge: true
+          }
+        );
+    }
+
     // =========================
     // UPDATE DRIVER WALLET
     // =========================
