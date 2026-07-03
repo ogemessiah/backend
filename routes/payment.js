@@ -178,9 +178,7 @@ router.post('/verify-payment', async (req, res) => {
 
     console.log( "Creating order...");
 
-    console.log('DEBUG token check:', await admin.app().options.credential.getAccessToken()
-    .then(t => 'TOKEN OK, expires: ' + new Date(t.expires_time))
-    .catch(e => 'TOKEN FETCH FAILED: ' + e.message));
+    
 
 
 
