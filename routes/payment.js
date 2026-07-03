@@ -239,20 +239,14 @@ router.post('/verify-payment', async (req, res) => {
     });
 
   } catch (error) {
-    console.error("========== FULL ERROR ==========");
-    console.error(error);
-    console.error("Code:", error.code);
-    console.error("Message:", error.message);
-    console.error("Stack:", error.stack);
-
-    if (error.response) {
-      console.error("Response status:", error.response.status);
-      console.error("Response data:", error.response.data);
-    }
-
+    
+    console.log('PAYMENT ERROR:', error?.response?.data || error.message);
+    
     return res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Payment verification failed',
+        
+      details: error.message
     });
   }
 });
