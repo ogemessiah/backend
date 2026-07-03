@@ -175,6 +175,9 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     // CREATE ORDER
     // =========================
+
+    console.log( "Creating order...");
+
     const orderRef = await db.collection('orders').add({
       ...orderData,
       originalPrice,
@@ -188,6 +191,8 @@ router.post('/verify-payment', async (req, res) => {
       reviewSubmitted: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    console.log("order created:", orderRef.id);
 
     if (orderData.userId) {
       await db
@@ -216,6 +221,8 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     // UPDATE DRIVER WALLET
     // =========================
+    console.log("Updating courier wallet...");
+
     const courierRef = db.collection('couriers_live').doc(orderData.courierId);
 
     const courierSnap = await courierRef.get();
@@ -228,6 +235,8 @@ router.post('/verify-payment', async (req, res) => {
         totalEarned: Number(courierData.totalEarned || 0) + driverEarning,
         totalDeliveries: Number(courierData.totalDeliveries || 0) + 1
       });
+
+      console.log("Wallet updated");
     }
 
     // =========================
