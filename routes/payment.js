@@ -178,6 +178,14 @@ router.post('/verify-payment', async (req, res) => {
 
     console.log( "Creating order...");
 
+    console.log("Testing Firestore write...");
+
+    await db.collection("test").doc("ping").set({
+      time: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log("Test write succeeded");
+
     
 
 
