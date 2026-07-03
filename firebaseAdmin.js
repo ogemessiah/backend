@@ -21,6 +21,16 @@ admin.initializeApp({
 
 const db =
   admin.firestore();
+(async () => {
+  try{
+    const collections = await db.listCollections();
+    console.log("firestore connected");
+    console.log("Collections:", collections.map( c => c.id));
+  }catch (e) {
+    console.error("firestore connection failed");
+    console.error(e);
+  }
+})();
 
 module.exports = {
   admin,
