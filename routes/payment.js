@@ -178,19 +178,14 @@ router.post('/verify-payment', async (req, res) => {
 
     console.log( "Creating order...");
 
-    const orderRef = await db.collection('orders').add({
-      ...orderData,
-      originalPrice,
-      amountPaid: customerPays,
-      voucherDiscount: voucherCost,
-      driverEarning,
-      platformFee,
-      paymentReference: reference,
-      paymentStatus: 'paid',
-      status: 'assigned',
-      reviewSubmitted: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    console.log("Testing Firestore write...");
+
+    await db.collection("test").doc("test").set({
+      hello: "world",
+      time: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    console.log ("firestore test write succeeded");
 
     console.log("order created:", orderRef.id);
 
@@ -252,9 +247,9 @@ router.post('/verify-payment', async (req, res) => {
     console.error("FULL ERROR");
     console.error(error);
 
-    if (error.stack) {
-      console.error(error.stack);
-    }
+    
+    console.error(error.stack);
+    
     
     
     return res.status(500).json({
