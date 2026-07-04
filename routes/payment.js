@@ -5,6 +5,8 @@ const { admin, db } = require('../firebaseAdmin');
 
 const router = express.Router();
 
+const { GoogleAuth } = require('google-auth-library');
+
 
 // =========================
 // HEALTH CHECK
@@ -286,6 +288,23 @@ router.get('/test-write', async (req, res) => {
     res.json({ success: true, id: ref.id });
   } catch (err) {
     res.status(500).json({ success: false, code: err.code, message: err.message });
+  }
+});
+
+router.get('/test-raw-auth', async (req, res) => {
+  try {
+    const auth = new GoogleAuth({
+      credentials: {
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
+        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+      },
+      scopes: ['https://www.googleapis.com/auth/datastore']
+    });
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    res.json({ success: true, tokenPrefix: token.token?.slice(0, 20) });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
