@@ -303,6 +303,16 @@ router.get('/test-key-shape', (req, res) => {
   });
 });
 
+router.get('/test-key-tail', (req, res) => {
+  const key = process.env.FIREBASE_PRIVATE_KEY || '';
+  res.json({
+    length: key.length,
+    last60: key.slice(-60),
+    last60_escaped: JSON.stringify(key.slice(-60))
+  });
+});
+
+
 
 router.post('/updateCourierRating', async (req, res) => {
 
