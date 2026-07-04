@@ -271,6 +271,25 @@ router.post('/verify-payment', async (req, res) => {
   }
 });
 
+router.get("/test-write", async (req, res) => {
+  try {
+    await db.collection("permission_test").doc("test").set({
+      hello: "world",
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      code: err.code,
+      message: err.message,
+      details: err.details
+    });
+  }
+});
+
 router.post('/updateCourierRating', async (req, res) => {
 
   try {
