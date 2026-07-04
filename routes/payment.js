@@ -290,6 +290,14 @@ router.get("/test-write", async (req, res) => {
   }
 });
 
+router.get('/debug-firebase', (req, res) => {
+  res.json({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    appOptions: admin.app().options
+  });
+});
+
 router.post('/updateCourierRating', async (req, res) => {
 
   try {
