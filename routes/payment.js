@@ -271,24 +271,24 @@ router.post('/verify-payment', async (req, res) => {
   }
 });
 
-router.get("/test-write", async (req, res) => {
+router.get('/test-read', async (req, res) => {
   try {
-    await db.collection("permission_test").doc("test").set({
-      hello: "world",
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    res.json({ success: true });
-
+    const snap = await db.collection('vouchers').limit(1).get();
+    res.json({ success: true, count: snap.size });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      code: err.code,
-      message: err.message,
-      details: err.details
-    });
+    res.status(500).json({ success: false, code: err.code, message: err.message });
   }
 });
+
+router.get('/test-write', async (req, res) => {
+  try {
+    const ref = await db.collection('_debug_test').add({ ts: Date.now() });
+    res.json({ success: true, id: ref.id });
+  } catch (err) {
+    res.status(500).json({ success: false, code: err.code, message: err.message });
+  }
+});
+
 
 
 
