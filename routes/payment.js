@@ -197,9 +197,6 @@ router.post('/verify-payment', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-
-    console.log("order created:", orderRef.id);
-
     if (orderData.userId) {
       await db
         .collection('users')
@@ -253,21 +250,24 @@ router.post('/verify-payment', async (req, res) => {
       orderId: orderRef.id
     });
 
-  } catch (error) {
+  } catch (err) {
 
     console.error("FULL ERROR");
-    console.error(error);
+    console.error(err);
 
     
-    console.error(error.stack);
-    
-    
-    
+    console.error("CODE:",err.code);
+    console.error("MESSAGE:", err.message)
+    console.error("DETAILS:", err.details)
+    console.error("METADATA:", err.metadata?.getMap?.());
+
     return res.status(500).json({
       success: false,
-      error: error.message
-        
+      code: err.code,
+      message: err.message,
+      details: err.details
     });
+    
   }
 });
 
