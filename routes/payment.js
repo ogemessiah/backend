@@ -308,8 +308,33 @@ router.get('/test-raw-auth', async (req, res) => {
   }
 });
 
+router.get('/test-rest-firestore', async (req, res) => {
+  try {
+    const auth = new GoogleAuth({
+      credentials: {
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
+        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+      },
+      scopes: ['https://www.googleapis.com/auth/datastore']
+    });
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
 
+    const url = `https://firestore.googleapis.com/v1/projects/${process.env.FIREBASE_PROJECT_ID}/databases/(default)/documents/vouchers`;
 
+    const response = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token.token}` }
+    });
+
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.message,
+      data: err.response?.data
+    });
+  }
+});
 
 
 router.post('/updateCourierRating', async (req, res) => {
