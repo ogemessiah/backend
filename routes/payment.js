@@ -289,7 +289,19 @@ router.get('/test-write', async (req, res) => {
   }
 });
 
-
+router.get('/test-key-shape', (req, res) => {
+  const key = process.env.FIREBASE_PRIVATE_KEY || '';
+  res.json({
+    length: key.length,
+    startsCorrect: key.startsWith('-----BEGIN PRIVATE KEY-----'),
+    endsCorrect: key.trim().endsWith('-----END PRIVATE KEY-----'),
+    hasEscapedNewlines: key.includes('\\n'),
+    hasRealNewlines: key.includes('\n'),
+    lineCount: key.split('\n').length,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    projectId: process.env.FIREBASE_PROJECT_ID
+  });
+});
 
 
 router.post('/updateCourierRating', async (req, res) => {
