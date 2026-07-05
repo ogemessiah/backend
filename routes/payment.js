@@ -5,8 +5,6 @@ const { admin, db } = require('../firebaseAdmin');
 
 const router = express.Router();
 
-const { GoogleAuth } = require('google-auth-library');
-
 
 // =========================
 // HEALTH CHECK
