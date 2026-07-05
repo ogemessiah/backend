@@ -177,14 +177,6 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     // CREATE ORDER
     // =========================
-
-    console.log( "Creating order...");
-
-    
-    
-
-
-
     const orderRef = await db.collection('orders').add({
       ...orderData,
       originalPrice,
@@ -226,8 +218,6 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     // UPDATE DRIVER WALLET
     // =========================
-    console.log("Updating courier wallet...");
-
     const courierRef = db.collection('couriers_live').doc(orderData.courierId);
 
     const courierSnap = await courierRef.get();
@@ -241,7 +231,7 @@ router.post('/verify-payment', async (req, res) => {
         totalDeliveries: Number(courierData.totalDeliveries || 0) + 1
       });
 
-      console.log("Wallet updated");
+     
     }
 
     // =========================
@@ -265,9 +255,7 @@ router.post('/verify-payment', async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      code: err.code,
-      message: err.message,
-      details: err.details
+      message: "Internal server error"
     });
     
   }
@@ -291,50 +279,6 @@ router.get('/test-write', async (req, res) => {
   }
 });
 
-router.get('/test-raw-auth', async (req, res) => {
-  try {
-    const auth = new GoogleAuth({
-      credentials: {
-        client_email: process.env.FIREBASE_CLIENT_EMAIL,
-        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-      },
-      scopes: ['https://www.googleapis.com/auth/datastore']
-    });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-    res.json({ success: true, tokenPrefix: token.token?.slice(0, 20) });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.get('/test-rest-firestore', async (req, res) => {
-  try {
-    const auth = new GoogleAuth({
-      credentials: {
-        client_email: process.env.FIREBASE_CLIENT_EMAIL,
-        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-      },
-      scopes: ['https://www.googleapis.com/auth/datastore']
-    });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-
-    const url = `https://firestore.googleapis.com/v1/projects/${process.env.FIREBASE_PROJECT_ID}/databases/(default)/documents/vouchers`;
-
-    const response = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token.token}` }
-    });
-
-    res.json({ success: true, data: response.data });
-  } catch (err) {
-    res.status(err.response?.status || 500).json({
-      success: false,
-      message: err.message,
-      data: err.response?.data
-    });
-  }
-});
 
 
 router.post('/updateCourierRating', async (req, res) => {
