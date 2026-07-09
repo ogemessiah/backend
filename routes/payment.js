@@ -259,23 +259,125 @@ router.post('/verify-payment', async (req, res) => {
   }
 });
 
-router.get('/test-read', async (req, res) => {
+
+// =========================
+// DRIVER DECLINES ORDER
+// =========================
+router.post('/decline-order', async (req, res) => {
+
   try {
-    const snap = await db.collection('vouchers').limit(1).get();
-    res.json({ success: true, count: snap.size });
+
+    const { orderId, courierId } = req.body;
+
+    if (!orderId || !courierId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing orderId or courierId'
+      });
+    }
+
+    const orderRef = db.collection('orders').doc(orderId);
+
+    const orderSnap = await orderRef.get();
+
+    if (!orderSnap.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    const order = orderSnap.data();
+
+    // Prevent declining twice
+    if (order.status === 'declined') {
+      return res.status(400).json({
+        success: false,
+        message: 'Order already declined'
+      });
+    }
+
+    // Update order status
+    await orderRef.update({
+      status: 'declined',
+      declinedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Remove driver's earnings
+    const courierRef = db
+      .collection('couriers_live')
+      .doc(courierId);
+
+    await courierRef.update({
+
+      walletBalance:
+        admin.firestore.FieldValue.increment(
+          -order.driverEarning
+        ),
+
+      totalEarned:
+        admin.firestore.FieldValue.increment(
+          -order.driverEarning
+        ),
+
+      totalDeliveries:
+        admin.firestore.FieldValue.increment(-1)
+
+    });
+
+    // Refund customer to wallet
+    const userRef = db
+      .collection('users')
+      .doc(order.userId);
+
+    await userRef.set({
+
+      walletBalance:
+        admin.firestore.FieldValue.increment(
+          order.amountPaid
+        ),
+
+      walletLastUpdated:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    }, { merge: true });
+
+    // Save wallet transaction
+    await db.collection('wallet_transactions').add({
+
+      userId: order.userId,
+
+      type: 'refund',
+
+      amount: order.amountPaid,
+
+      description:
+        'Driver declined your delivery. Amount refunded to wallet.',
+
+      orderId,
+
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    });
+
+    return res.json({
+      success: true
+    });
+
   } catch (err) {
-    res.status(500).json({ success: false, code: err.code, message: err.message });
+
+    console.error(err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
+
 });
 
-router.get('/test-write', async (req, res) => {
-  try {
-    const ref = await db.collection('_debug_test').add({ ts: Date.now() });
-    res.json({ success: true, id: ref.id });
-  } catch (err) {
-    res.status(500).json({ success: false, code: err.code, message: err.message });
-  }
-});
 
 
 
