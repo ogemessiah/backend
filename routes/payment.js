@@ -71,6 +71,7 @@ router.post('/verify-payment', async (req, res) => {
 
     let finalPrice = originalPrice;
 
+
     if (orderData.voucherCode) {
 
       const voucherSnap = await db
@@ -157,16 +158,20 @@ router.post('/verify-payment', async (req, res) => {
 
     }
     
+   
+    const userRef = db.collection('users').doc(orderData.userId);
+    const userSnap = await userRef.get();
+    const walletBalance = Number(userSnap.data()?.walletBalance || 0);
+    const walletUsed = Math.min(walletBalance, finalPrice);
+    const amountExpected = finalPrice - walletUsed;
     const customerPays = Number(payment.amount) / 100;
-
     const platformFee = Math.floor(originalPrice * 0.05) + 500;
     const driverEarning = originalPrice - platformFee;
-
     const voucherCost = originalPrice - finalPrice;
 
     
 
-    if (Math.abs(customerPays - finalPrice) > 0.01) {
+    if (Math.abs(customerPays - amountExpected) > 0.01) {
       return res.status(400).json({
         success: false,
         error: 'Payment amount mismatch'
@@ -180,6 +185,7 @@ router.post('/verify-payment', async (req, res) => {
       ...orderData,
       originalPrice,
       amountPaid: customerPays,
+      walletUsed,
       voucherDiscount: voucherCost,
       driverEarning,
       platformFee,
@@ -189,6 +195,22 @@ router.post('/verify-payment', async (req, res) => {
       reviewSubmitted: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    // deduct customer wallet
+    if (walletUsed> 0) {
+      await userRef.update({
+        walletBalance:
+          admin.firestore.FieldValue.increment(-walletUsed)
+      });
+      await db.collection('wallet_transactions').add({
+        userId: orderData.userId,
+        type: 'debit',
+        amount: walletUsed,
+        description: 'Wallet payment',
+        orderId: orderRef.id,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
 
     if (orderData.userId) {
       await db
@@ -275,6 +297,298 @@ router.post('/verify-payment', async (req, res) => {
   }
 });
 
+// =========================
+// WALLET PAYMENT (100% Wallet)
+// =========================
+router.post('/wallet-payment', async (req, res) => {
+
+  try {
+
+    const { orderData } = req.body;
+
+    if (!orderData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing orderData'
+      });
+    }
+
+    const originalPrice = Number(orderData.originalPrice || 0);
+
+    let finalPrice = originalPrice;
+
+    const userRef =
+      db.collection('users').doc(orderData.userId);
+
+    const userSnap =
+      await userRef.get();
+
+    const walletBalance =
+      Number(userSnap.data()?.walletBalance || 0);
+
+    // -------------------------
+    // Apply voucher (if any)
+    // -------------------------
+    if (orderData.voucherCode) {
+
+      const voucherSnap = await db
+        .collection('vouchers')
+        .doc(orderData.voucherCode)
+        .get();
+
+      if (!voucherSnap.exists) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid voucher'
+        });
+      }
+
+      const voucher = voucherSnap.data();
+
+      if (!voucher.active) {
+        return res.status(400).json({
+          success: false,
+          message: 'Voucher is inactive'
+        });
+      }
+
+      if (voucher.expiry.toDate() < new Date()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Voucher has expired'
+        });
+      }
+
+      if (voucher.maxUses && voucher.timesUsed >= voucher.maxUses) {
+        return res.status(400).json({
+          success: false,
+          message: 'Voucher usage limit reached'
+        });
+      }
+
+      if (originalPrice < voucher.minimumOrder) {
+        return res.status(400).json({
+          success: false,
+          message: 'Order does not meet minimum amount'
+        });
+      }
+
+      const userSnap = await userRef.get();
+      const user = userSnap.data();
+
+      if (
+        voucher.firstTimeOnly &&
+        user?.hasPlacedFirstOrder
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'Voucher only valid for first order'
+        });
+      }
+
+      if (voucher.type === 'fixed') {
+
+        finalPrice = Math.max(
+          originalPrice - voucher.value,
+          0
+        );
+
+      } else {
+
+        let amountOff =
+          originalPrice * (voucher.value / 100);
+
+        if (
+          voucher.maximumDiscount &&
+          amountOff > voucher.maximumDiscount
+        ) {
+          amountOff = voucher.maximumDiscount;
+        }
+
+        finalPrice = Math.max(
+          originalPrice - amountOff,
+          0
+        );
+
+      }
+
+    }
+
+    // -------------------------
+    // Customer wallet
+    // -------------------------
+
+    
+
+    if (walletBalance < finalPrice) {
+
+      return res.status(400).json({
+        success: false,
+        message: 'Insufficient wallet balance'
+      });
+
+    }
+
+    // Deduct wallet
+
+    await userRef.update({
+
+      walletBalance:
+        admin.firestore.FieldValue.increment(
+          -finalPrice
+        ),
+
+      hasPlacedFirstOrder: true
+
+    });
+
+    
+
+    
+
+    // -------------------------
+    // Earnings
+    // -------------------------
+
+    const platformFee =
+      Math.floor(originalPrice * 0.05) + 500;
+
+    const driverEarning =
+      originalPrice - platformFee;
+
+    const voucherDiscount =
+      originalPrice - finalPrice;
+
+    // -------------------------
+    // Create Order
+    // -------------------------
+
+    const orderRef =
+      await db.collection('orders').add({
+
+        ...orderData,
+
+        originalPrice,
+
+        amountPaid: 0,
+
+        walletUsed: finalPrice,
+
+        voucherDiscount,
+
+        driverEarning,
+
+        platformFee,
+
+        paymentStatus: 'wallet',
+
+        status: 'assigned',
+
+        reviewSubmitted: false,
+
+        createdAt:
+          admin.firestore.FieldValue.serverTimestamp()
+
+      });
+
+    await db.collection('wallet_transactions').add({
+
+      userId: orderData.userId,
+
+      type: 'debit',
+
+      amount: finalPrice,
+
+      description: 'Wallet payment',
+
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    });
+
+    // -------------------------
+    // Driver Wallet
+    // -------------------------
+
+    const courierRef =
+      db.collection('couriers_live').doc(orderData.courierId);
+
+    await courierRef.update({
+
+      walletBalance:
+        admin.firestore.FieldValue.increment(
+          driverEarning
+        ),
+
+      totalEarned:
+        admin.firestore.FieldValue.increment(
+          driverEarning
+        ),
+
+      totalDeliveries:
+        admin.firestore.FieldValue.increment(1)
+
+    });
+
+    await db.collection('wallet_transactions').add({
+
+      userId: orderData.courierId,
+
+      type: 'credit',
+
+      amount: driverEarning,
+
+      description: 'Delivery payment received',
+
+      orderId: orderRef.id,
+
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    });
+
+    // -------------------------
+    // Voucher usage
+    // -------------------------
+
+    if (orderData.voucherCode) {
+
+      await db
+        .collection('vouchers')
+        .doc(orderData.voucherCode)
+        .update({
+
+          timesUsed:
+            admin.firestore.FieldValue.increment(1)
+
+        });
+
+    }
+
+    return res.json({
+
+      success: true,
+
+      orderId: orderRef.id
+
+    });
+
+  } catch (err) {
+
+    console.error(err);
+
+    return res.status(500).json({
+
+      success: false,
+
+      message: err.message
+
+    });
+
+  }
+
+});
+
 
 // =========================
 // DRIVER DECLINES ORDER
@@ -304,6 +618,10 @@ router.post('/decline-order', async (req, res) => {
     }
 
     const order = orderSnap.data();
+
+    const refundAmount =
+      (order.amountPaid || 0) +
+      (order.walletUsed || 0);
 
     // Prevent declining twice
     if (order.status === 'declined') {
@@ -374,7 +692,7 @@ router.post('/decline-order', async (req, res) => {
 
       walletBalance:
         admin.firestore.FieldValue.increment(
-          order.amountPaid
+          refundAmount
         ),
 
       walletLastUpdated:
@@ -389,7 +707,7 @@ router.post('/decline-order', async (req, res) => {
 
       type: 'refund',
 
-      amount: order.amountPaid,
+      amount: refundAmount,
 
       description:
         'Driver declined your delivery. Amount refunded to wallet.',
