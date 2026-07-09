@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 
 const { admin, db } = require('../firebaseAdmin');
+const { firestore } = require('firebase-admin');
 
 const router = express.Router();
 
@@ -224,10 +225,25 @@ router.post('/verify-payment', async (req, res) => {
       const courierData = courierSnap.data();
 
       await courierRef.update({
-        walletBalance: Number(courierData.walletBalance || 0) + driverEarning,
-        totalEarned: Number(courierData.totalEarned || 0) + driverEarning,
-        totalDeliveries: Number(courierData.totalDeliveries || 0) + 1
+        walletBalance: admin.firestore.FieldValue.increment(driverEarning),
+        totalEarned: admin.firestore.FieldValue.increment(driverEarning),
+        totalDeliveries: admin.firestore.FieldValue.increment(1)
+        
       });
+
+      await db.collection('wallet_transactions').add({
+
+        userId: orderData.courierId,
+        type: 'credit',
+        amount: driverEarning,
+        description: 'Delivery payment received',
+        orderId: orderRef.id,
+        createdAt:
+          admin.firestore.FieldValue.serverTimestamp()
+
+      });
+
+      
 
      
     }
@@ -307,6 +323,7 @@ router.post('/decline-order', async (req, res) => {
     const courierRef = db
       .collection('couriers_live')
       .doc(courierId);
+    
 
     await courierRef.update({
 
@@ -320,8 +337,31 @@ router.post('/decline-order', async (req, res) => {
           -order.driverEarning
         ),
 
-      totalDeliveries:
-        admin.firestore.FieldValue.increment(-1)
+      totalDeliveries: admin.firestore.FieldValue.increment(-1)
+
+      
+        
+    });
+
+    const updatedCourier = await courierRef.get();
+
+    if ((updatedCourier.data().totalDeliveries || 0) < 0) {
+      await courierRef.update({
+        totalDeliveries: 0
+      });
+    }
+
+    
+
+    await db.collection('wallet_transactions').add({
+
+      userId: courierId,
+      type: 'debit',
+      amount: order.driverEarning,
+      description: 'Delivery declined',
+      orderId,
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp()
 
     });
 
