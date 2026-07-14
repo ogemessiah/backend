@@ -482,6 +482,8 @@ router.post('/wallet-payment', async (req, res) => {
 
         paymentStatus: 'wallet',
 
+        paymentReference: orderData.paymentReference || null,
+
         status: 'assigned',
 
         reviewSubmitted: false,
@@ -500,6 +502,8 @@ router.post('/wallet-payment', async (req, res) => {
       amount: finalPrice,
 
       description: 'Wallet payment',
+
+      orderId: orderRef.id,
 
       createdAt:
         admin.firestore.FieldValue.serverTimestamp()
