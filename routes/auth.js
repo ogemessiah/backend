@@ -42,7 +42,7 @@ router.post('/send-verification-email', async (req, res) => {
             <a
               href="${verificationLink}"
               style="
-                background:#2563eb;
+                background:#04B559;
                 color:#fff;
                 text-decoration:none;
                 padding:14px 28px;
@@ -84,6 +84,81 @@ router.post('/send-verification-email', async (req, res) => {
   }
 });
 
+router.post('/send-password-reset-email', async (req, res) => {
+  try {
+    const { email } = req.body;
 
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const resetLink =
+      await admin.auth().generatePasswordResetLink(email);
+
+    await resend.emails.send({
+      from: 'TunnelMouth <noreply@tunnelmouth.com>',
+      to: email,
+      subject: 'Reset your TunnelMouth password',
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:30px;">
+          <h2>Reset your TunnelMouth password</h2>
+
+          <p>
+            We received a request to reset the password for your TunnelMouth account.
+          </p>
+
+          <p>
+            Click the button below to create a new password.
+          </p>
+
+          <p style="margin:40px 0;">
+            <a
+              href="${resetLink}"
+              style="
+                background:#04B559;
+                color:#fff;
+                text-decoration:none;
+                padding:14px 28px;
+                border-radius:8px;
+                display:inline-block;
+                font-weight:bold;
+              "
+            >
+              Reset Password
+            </a>
+          </p>
+
+          <p>
+            If you didn't request a password reset, you can safely ignore this email.
+            Your password will remain unchanged.
+          </p>
+
+          <hr>
+
+          <small>
+            © TunnelMouth Technologies Limited
+          </small>
+        </div>
+      `
+    });
+
+    return res.json({
+      success: true
+    });
+
+  } catch (err) {
+
+    console.error(err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+});
 
 module.exports = router;
