@@ -92,7 +92,7 @@ router.get('/test-email', async (req, res) => {
       await admin.auth().generateEmailVerificationLink(email);
 
     const result = await resend.emails.send({
-      from: 'TunnelMouth <onboarding@resend.dev>',
+      from: 'TunnelMouth <noreply@tunnelmouth.com>',
       to: email,
       subject: 'TunnelMouth Test Verification Email',
       html: `
