@@ -23,12 +23,12 @@ router.post('/send-verification-email', async (req, res) => {
 
     // Send email
     await resend.emails.send({
-      from: 'TunnelMouth <onboarding@resend.dev>',
+      from: 'TunnelMouth <noreply@tunnelmouth.com>',
       to: email,
       subject: 'Verify your TunnelMouth account',
       html: `
         <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:30px;">
-          <h2>Welcome to TunnelMouth 🚚</h2>
+          <h2>Welcome to TunnelMouth</h2>
 
           <p>
             Thank you for creating your account.
@@ -84,31 +84,6 @@ router.post('/send-verification-email', async (req, res) => {
   }
 });
 
-router.get('/test-email', async (req, res) => {
-  try {
-    const email = 'onwuemerieogechi@gmail.com';
 
-    const verificationLink =
-      await admin.auth().generateEmailVerificationLink(email);
-
-    const result = await resend.emails.send({
-      from: 'TunnelMouth <noreply@tunnelmouth.com>',
-      to: email,
-      subject: 'TunnelMouth Test Verification Email',
-      html: `
-        <h2>Welcome to TunnelMouth</h2>
-        <p>This is a test email.</p>
-        <p><a href="${verificationLink}">Verify Email</a></p>
-      `
-    });
-
-    res.json(result);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      error: err.message
-    });
-  }
-});
 
 module.exports = router;
