@@ -3,6 +3,8 @@ const cors = require('cors');
 
 const paymentRoutes = require('./routes/payment');
 
+const authRoutes = require('./routes/auth');
+
 const app = express();
 
 // =========================
@@ -15,6 +17,7 @@ app.use(express.json());
 // ROUTES
 // =========================
 app.use('/payment', paymentRoutes);
+app.use('/auth', authRoutes);
 
 // =========================
 // HEALTH CHECK
