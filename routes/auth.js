@@ -169,34 +169,6 @@ router.post('/send-password-reset-email', async (req, res) => {
   }
 });
 
-router.post('/verify-email', async (req, res) => {
-  try {
 
-    const { oobCode } = req.body;
-
-    if (!oobCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Verification code is required'
-      });
-    }
-
-    await admin.auth().applyActionCode(oobCode);
-
-    return res.json({
-      success: true
-    });
-
-  } catch (err) {
-
-    console.error(err);
-
-    return res.status(400).json({
-      success: false,
-      message: 'Verification link is invalid or has expired.'
-    });
-
-  }
-});
 
 module.exports = router;
