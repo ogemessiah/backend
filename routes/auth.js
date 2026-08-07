@@ -235,7 +235,7 @@ router.post('/send-phone-otp', async (req, res) => {
 
     console.log('Termii send OTP response:', data);
 
-    if (!response.ok || !data.pinId && !data.pin_id) {
+    if (!response.ok || (!data.pinId && !data.pin_id)) {
       return res.status(400).json({
         success: false,
         message:
