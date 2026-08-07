@@ -169,6 +169,162 @@ router.post('/send-password-reset-email', async (req, res) => {
   }
 });
 
+// =========================
+// SEND PHONE OTP
+// =========================
 
+router.post('/send-phone-otp', async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required'
+      });
+    }
+
+    // Convert Nigerian number to international format
+    let phone = phoneNumber.trim();
+
+    if (phone.startsWith('0')) {
+      phone = '234' + phone.substring(1);
+    }
+
+    if (phone.startsWith('+')) {
+      phone = phone.substring(1);
+    }
+
+    const response = await fetch(
+      `${process.env.TERMII_BASE_URL || 'https://v4.api.termii.com'}/api/sms/otp/send`,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type': 'application/json'
+        },
+
+        body: JSON.stringify({
+          api_key: process.env.TERMII_API_KEY,
+
+          message_type: 'NUMERIC',
+
+          to: phone,
+
+          from: 'TunnelMouth',
+
+          channel: 'generic',
+
+          pin_attempts: 3,
+
+          pin_time_to_live: 5,
+
+          pin_length: 6,
+
+          pin_placeholder: '< 123456 >',
+
+          message_text:
+            'Your TunnelMouth verification code is < 123456 >',
+
+          pin_type: 'NUMERIC'
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    console.log('Termii send OTP response:', data);
+
+    if (!response.ok || !data.pinId && !data.pin_id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          data.message ||
+          'Unable to send verification code.'
+      });
+    }
+
+    return res.json({
+      success: true,
+
+      // Termii may return either format depending on API response
+      pinId: data.pinId || data.pin_id
+    });
+
+  } catch (error) {
+
+    console.error('Termii send OTP error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to send verification code.'
+    });
+  }
+});
+
+
+// =========================
+// VERIFY PHONE OTP
+// =========================
+
+router.post('/verify-phone-otp', async (req, res) => {
+  try {
+
+    const { pinId, code } = req.body;
+
+    if (!pinId || !code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code is required'
+      });
+    }
+
+    const response = await fetch(
+      `${process.env.TERMII_BASE_URL || 'https://v4.api.termii.com'}/api/sms/otp/verify`,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type': 'application/json'
+        },
+
+        body: JSON.stringify({
+          api_key: process.env.TERMII_API_KEY,
+
+          pin_id: pinId,
+
+          pin: code
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    console.log('Termii verify OTP response:', data);
+
+    if (!response.ok) {
+      return res.status(400).json({
+        success: false,
+        message:
+          data.message ||
+          'Invalid verification code.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Phone number verified successfully.'
+    });
+
+  } catch (error) {
+
+    console.error('Termii verify OTP error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to verify phone number.'
+    });
+  }
+});
 
 module.exports = router;
