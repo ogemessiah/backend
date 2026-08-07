@@ -19,7 +19,7 @@ router.post('/send-verification-email', async (req, res) => {
 
     // Generate Firebase verification link
     const actionCodeSettings = {
-      url: "https://tunnelmouth.com/verify",
+      url: "https://tunnelmouth.com/verify?verified=true",
       handleCodeInApp: false,
     };
 
