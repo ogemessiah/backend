@@ -170,7 +170,7 @@ router.post('/send-password-reset-email', async (req, res) => {
 });
 
 // =========================
-// SEND PHONE OTP
+// SEND PHONE OTP - ROBASE
 // =========================
 
 router.post('/send-phone-otp', async (req, res) => {
@@ -188,54 +188,41 @@ router.post('/send-phone-otp', async (req, res) => {
     let phone = phoneNumber.trim();
 
     if (phone.startsWith('0')) {
-      phone = '234' + phone.substring(1);
-    }
-
-    if (phone.startsWith('+')) {
-      phone = phone.substring(1);
+      phone = '+234' + phone.substring(1);
+    } else if (phone.startsWith('234')) {
+      phone = '+' + phone;
+    } else if (!phone.startsWith('+')) {
+      phone = '+' + phone;
     }
 
     const response = await fetch(
-      `${process.env.TERMII_BASE_URL || 'https://v4.api.termii.com'}/api/sms/otp/send`,
+      'https://api.robase.dev/v1/otp/send',
       {
         method: 'POST',
 
         headers: {
+          'Authorization':
+            `Bearer ${process.env.ROBASE_API_KEY}`,
+
           'Content-Type': 'application/json'
         },
 
         body: JSON.stringify({
-          api_key: process.env.TERMII_API_KEY,
-
-          message_type: 'NUMERIC',
-
-          to: phone,
-
-          from: 'TunnelMouth',
-
-          channel: 'generic',
-
-          pin_attempts: 3,
-
-          pin_time_to_live: 5,
-
-          pin_length: 6,
-
-          pin_placeholder: '< 123456 >',
-
-          message_text:
-            'Your TunnelMouth verification code is < 123456 >',
-
-          pin_type: 'NUMERIC'
+          phone_number: phone,
+          code_length: 6,
+          ttl_seconds: 600
         })
       }
     );
 
     const data = await response.json();
 
-    console.log('Termii send OTP response:', data);
+    console.log(
+      'Robase send OTP response:',
+      data
+    );
 
-    if (!response.ok || (!data.pinId && !data.pin_id)) {
+    if (!response.ok || !data.otp_id) {
       return res.status(400).json({
         success: false,
         message:
@@ -247,24 +234,27 @@ router.post('/send-phone-otp', async (req, res) => {
     return res.json({
       success: true,
 
-      // Termii may return either format depending on API response
-      pinId: data.pinId || data.pin_id
+      // Keep your existing app's pinId name
+      pinId: data.otp_id
     });
 
   } catch (error) {
 
-    console.error('Termii send OTP error:', error);
+    console.error(
+      'Robase send OTP error:',
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: 'Unable to send verification code.'
+      message:
+        'Unable to send verification code.'
     });
   }
 });
 
-
 // =========================
-// VERIFY PHONE OTP
+// VERIFY PHONE OTP - ROBASE
 // =========================
 
 router.post('/verify-phone-otp', async (req, res) => {
@@ -280,49 +270,61 @@ router.post('/verify-phone-otp', async (req, res) => {
     }
 
     const response = await fetch(
-      `${process.env.TERMII_BASE_URL || 'https://v4.api.termii.com'}/api/sms/otp/verify`,
+      'https://api.robase.dev/v1/otp/verify',
       {
         method: 'POST',
 
         headers: {
+          'Authorization':
+            `Bearer ${process.env.ROBASE_API_KEY}`,
+
           'Content-Type': 'application/json'
         },
 
         body: JSON.stringify({
-          api_key: process.env.TERMII_API_KEY,
-
-          pin_id: pinId,
-
-          pin: code
+          otp_id: pinId,
+          code: code
         })
       }
     );
 
     const data = await response.json();
 
-    console.log('Termii verify OTP response:', data);
+    console.log(
+      'Robase verify OTP response:',
+      data
+    );
 
-    if (!response.ok) {
+    if (
+      !response.ok ||
+      data.verified !== true
+    ) {
+
       return res.status(400).json({
         success: false,
         message:
           data.message ||
-          'Invalid verification code.'
+          'Invalid or expired verification code.'
       });
     }
 
     return res.json({
       success: true,
-      message: 'Phone number verified successfully.'
+      message:
+        'Phone number verified successfully.'
     });
 
   } catch (error) {
 
-    console.error('Termii verify OTP error:', error);
+    console.error(
+      'Robase verify OTP error:',
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: 'Unable to verify phone number.'
+      message:
+        'Unable to verify phone number.'
     });
   }
 });
