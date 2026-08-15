@@ -295,17 +295,17 @@ router.post('/verify-phone-otp', async (req, res) => {
       data
     );
 
-    if (
-      !response.ok ||
-      data.verified !== true
-    ) {
+    const verified =
+      data.verified === true ||
+      data.status === 'approved';
 
+    if (!response.ok || !verified) {
       return res.status(400).json({
         success: false,
         message:
           data.message ||
-          'Invalid or expired verification code.'
-      });
+          'Invalid or expired verification code'
+      })
     }
 
     return res.json({
