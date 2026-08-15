@@ -296,8 +296,8 @@ router.post('/verify-phone-otp', async (req, res) => {
     );
 
     const verified =
-      data.verified === true ||
-      data.status === 'approved';
+      data.valid === true &&
+      data.status === "verified";
 
     if (!response.ok || !verified) {
       return res.status(400).json({
@@ -305,7 +305,7 @@ router.post('/verify-phone-otp', async (req, res) => {
         message:
           data.message ||
           'Invalid or expired verification code'
-      })
+      });
     }
 
     return res.json({
