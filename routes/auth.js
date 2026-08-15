@@ -222,7 +222,7 @@ router.post('/send-phone-otp', async (req, res) => {
       data
     );
 
-    if (!response.ok || !data.otp_id) {
+    if (!response.ok || !data.id) {
       return res.status(400).json({
         success: false,
         message:
@@ -235,7 +235,7 @@ router.post('/send-phone-otp', async (req, res) => {
       success: true,
 
       // Keep your existing app's pinId name
-      pinId: data.otp_id
+      pinId: data.id
     });
 
   } catch (error) {
