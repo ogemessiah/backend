@@ -5,6 +5,8 @@ const paymentRoutes = require('./routes/payment');
 
 const authRoutes = require('./routes/auth');
 
+const terminalRoutes = require('./routes/terminal');
+
 const app = express();
 
 // =========================
@@ -18,6 +20,7 @@ app.use(express.json());
 // =========================
 app.use('/payment', paymentRoutes);
 app.use('/auth', authRoutes);
+app.use('/terminal', terminalRoutes);
 
 // =========================
 // HEALTH CHECK
