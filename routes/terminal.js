@@ -184,21 +184,114 @@ router.get('/carriers', async (req, res) => {
 
 
 // =========================
-// TEMPORARY BROWSER QUOTE TEST
+// PRODUCTION QUOTE ENDPOINT
+// POST /terminal/quote
 // =========================
 
-router.get('/quote-test', async (req, res) => {
+router.post('/quote', async (req, res) => {
 
   try {
 
-    console.log(
-      'Starting T-Ship quote test...'
-    );
+    const {
+      pickup,
+      delivery,
+      weight,
+      itemName,
+      itemValue
+    } = req.body;
 
 
     // =========================
-    // TEST DELIVERY
-    // LEKKI → IKEJA
+    // VALIDATE REQUEST
+    // =========================
+
+    if (!pickup || !delivery) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Pickup and delivery addresses are required.'
+
+      });
+
+    }
+
+
+    if (
+      !pickup.city ||
+      !pickup.state ||
+      !pickup.country
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Pickup address must include city, state and country.'
+
+      });
+
+    }
+
+
+    if (
+      !delivery.city ||
+      !delivery.state ||
+      !delivery.country
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Delivery address must include city, state and country.'
+
+      });
+
+    }
+
+
+    const parcelWeight =
+      Number(weight);
+
+
+    if (
+      !Number.isFinite(parcelWeight) ||
+      parcelWeight <= 0
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'A valid parcel weight is required.'
+
+      });
+
+    }
+
+
+    // =========================
+    // DEFAULT VALUES
+    // =========================
+
+    const name =
+      itemName ||
+      'Package';
+
+    const value =
+      Number(itemValue) > 0
+        ? Number(itemValue)
+        : 10000;
+
+
+    // =========================
+    // T-SHIP REQUEST
     // =========================
 
     const quoteRequest = {
@@ -206,26 +299,34 @@ router.get('/quote-test', async (req, res) => {
       pickup_address: {
 
         city:
-          'Lekki',
+          pickup.city,
 
         state:
-          'Lagos',
+          pickup.state,
 
         country:
-          'NG'
+          pickup.country,
+
+        zip:
+          pickup.zip ||
+          ''
 
       },
 
       delivery_address: {
 
         city:
-          'Ikeja',
+          delivery.city,
 
         state:
-          'Lagos',
+          delivery.state,
 
         country:
-          'NG'
+          delivery.country,
+
+        zip:
+          delivery.zip ||
+          ''
 
       },
 
@@ -235,26 +336,26 @@ router.get('/quote-test', async (req, res) => {
       parcel: {
 
         description:
-          'Phone',
+          name,
 
         items: [
 
           {
 
             description:
-              'Phone',
+              name,
 
             name:
-              'Phone',
+              name,
 
             currency:
               'NGN',
 
             value:
-              10000,
+              value,
 
             weight:
-              0.5,
+              parcelWeight,
 
             quantity:
               1
@@ -264,7 +365,7 @@ router.get('/quote-test', async (req, res) => {
         ],
 
         weight:
-          0.5,
+          parcelWeight,
 
         weight_unit:
           'kg'
@@ -284,7 +385,7 @@ router.get('/quote-test', async (req, res) => {
 
 
     // =========================
-    // SEND TO T-SHIP
+    // CALL T-SHIP
     // =========================
 
     const response = await fetch(
@@ -313,10 +414,6 @@ router.get('/quote-test', async (req, res) => {
     );
 
 
-    // =========================
-    // READ RESPONSE
-    // =========================
-
     const data =
       await response.json();
 
@@ -328,13 +425,16 @@ router.get('/quote-test', async (req, res) => {
 
 
     // =========================
-    // TERMINAL ERROR
+    // T-SHIP ERROR
     // =========================
 
-    if (!response.ok) {
+    if (
+      !response.ok ||
+      data.status !== true
+    ) {
 
       return res.status(
-        response.status
+        response.status || 400
       ).json({
 
         success:
@@ -342,10 +442,7 @@ router.get('/quote-test', async (req, res) => {
 
         message:
           data.message ||
-          'T-Ship quote request failed.',
-
-        terminalResponse:
-          data
+          'Unable to retrieve delivery quotes.'
 
       });
 
@@ -353,7 +450,147 @@ router.get('/quote-test', async (req, res) => {
 
 
     // =========================
-    // SUCCESS
+    // EXTRACT RATES
+    // =========================
+
+    const rates =
+      Array.isArray(data.data)
+        ? data.data
+        : [];
+
+
+    // =========================
+    // ADD TUNNELMOUTH FEE
+    //
+    // 5% + ₦500
+    // =========================
+
+    const quotes =
+      rates
+
+        .filter((rate) => {
+
+          return (
+            rate.pickup_available !== false &&
+            Number.isFinite(
+              Number(rate.amount)
+            )
+          );
+
+        })
+
+        .map((rate) => {
+
+          const basePrice =
+            Number(rate.amount);
+
+          const platformFee =
+            basePrice * 0.05;
+
+          const fixedFee =
+            500;
+
+          const tunnelMouthPrice =
+            basePrice +
+            platformFee +
+            fixedFee;
+
+
+          return {
+
+            courierName:
+              rate.carrier_name,
+
+            courierLogo:
+              rate.carrier_logo ||
+              null,
+
+            courierSlug:
+              rate.carrier_slug ||
+              null,
+
+            carrierId:
+              rate.carrier_id ||
+              rate.carrier_reference ||
+              null,
+
+            rateId:
+              rate.id ||
+              null,
+
+            basePrice:
+              Number(
+                basePrice.toFixed(2)
+              ),
+
+            platformFee:
+              Number(
+                platformFee.toFixed(2)
+              ),
+
+            fixedFee:
+              fixedFee,
+
+            price:
+              Number(
+                tunnelMouthPrice.toFixed(2)
+              ),
+
+            currency:
+              rate.currency ||
+              'NGN',
+
+            deliveryTime:
+              rate.delivery_time ||
+              null,
+
+            deliveryTimeline:
+              rate.delivery_timeline ||
+              null,
+
+            pickupTime:
+              rate.pickup_time ||
+              null,
+
+            pickupTimeline:
+              rate.pickup_timeline ||
+              null,
+
+            deliveryDate:
+              rate.delivery_date ||
+              null,
+
+            pickupDate:
+              rate.pickup_date ||
+              null,
+
+            recommended:
+              rate.metadata?.recommended === true ||
+              rate.recommended === true,
+
+            dropoffRequired:
+              rate.dropoff_required === true,
+
+            dropoffAvailable:
+              rate.dropoff_available !== false
+
+          };
+
+        });
+
+
+    // =========================
+    // SORT CHEAPEST FIRST
+    // =========================
+
+    quotes.sort(
+      (a, b) =>
+        a.price - b.price
+    );
+
+
+    // =========================
+    // RESPONSE
     // =========================
 
     return res.json({
@@ -361,20 +598,23 @@ router.get('/quote-test', async (req, res) => {
       success:
         true,
 
-      message:
-        'T-Ship quote request completed successfully.',
+      count:
+        quotes.length,
 
-      testRoute:
-        'Lekki → Ikeja',
+      pickup:
+        pickup,
 
-      testWeight:
-        '0.5 kg',
+      delivery:
+        delivery,
 
-      testItem:
-        'Phone',
+      weight:
+        parcelWeight,
 
-      terminalResponse:
-        data
+      itemName:
+        name,
+
+      quotes:
+        quotes
 
     });
 
@@ -382,20 +622,17 @@ router.get('/quote-test', async (req, res) => {
   } catch (error) {
 
     console.error(
-      'T-Ship quote test error:',
+      'T-Ship quote error:',
       error
     );
 
-
-    return res.status(
-      500
-    ).json({
+    return res.status(500).json({
 
       success:
         false,
 
       message:
-        'Unable to connect to T-Ship quote service.',
+        'Unable to retrieve delivery quotes.',
 
       error:
         error.message
@@ -408,7 +645,7 @@ router.get('/quote-test', async (req, res) => {
 
 
 // =========================
-// EXPORT ROUTER
+// EXPORT
 // =========================
 
 module.exports = router;
