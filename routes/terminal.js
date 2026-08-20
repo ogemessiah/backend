@@ -373,7 +373,7 @@ router.post('/quote', async (req, res) => {
       },
 
       persist_data:
-        false
+        true
 
     };
 
@@ -515,6 +515,7 @@ router.post('/quote', async (req, res) => {
               null,
 
             rateId:
+              rate.rate_id ||
               rate.id ||
               null,
 
@@ -633,6 +634,482 @@ router.post('/quote', async (req, res) => {
 
       message:
         'Unable to retrieve delivery quotes.',
+
+      error:
+        error.message
+
+    });
+
+  }
+
+});
+
+// =========================
+// ARRANGE TERMINAL SHIPMENT
+// POST /terminal/arrange
+// =========================
+
+router.post('/arrange', async (req, res) => {
+
+  try {
+
+    const {
+      pickup,
+      delivery,
+      weight,
+      itemName,
+      itemValue,
+      rateId,
+      orderId,
+      customer
+    } = req.body;
+
+
+    // =========================
+    // VALIDATION
+    // =========================
+
+    if (!pickup || !delivery) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'Pickup and delivery information are required.'
+      });
+
+    }
+
+
+    if (!rateId) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'Terminal rate ID is required.'
+      });
+
+    }
+
+
+    const parcelWeight =
+      Number(weight);
+
+
+    if (
+      !Number.isFinite(parcelWeight) ||
+      parcelWeight <= 0
+    ) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'A valid parcel weight is required.'
+      });
+
+    }
+
+
+    const name =
+      itemName ||
+      'Package';
+
+
+    const value =
+      Number(itemValue) > 0
+        ? Number(itemValue)
+        : 10000;
+
+
+    // =========================
+    // CREATE QUICK SHIPMENT
+    // =========================
+
+    const shipmentRequest = {
+
+      pickup_address: {
+
+        line1:
+          pickup.line1 ||
+          pickup.address ||
+          pickup.description ||
+          '',
+
+        city:
+          pickup.city,
+
+        state:
+          pickup.state,
+
+        country:
+          pickup.country,
+
+        zip:
+          pickup.zip ||
+          '',
+
+        first_name:
+          pickup.firstName ||
+          customer?.firstName ||
+          'TunnelMouth',
+
+        last_name:
+          pickup.lastName ||
+          customer?.lastName ||
+          'Customer',
+
+        phone:
+          pickup.phone ||
+          customer?.phone ||
+          '',
+
+        email:
+          pickup.email ||
+          customer?.email ||
+          ''
+
+      },
+
+
+      delivery_address: {
+
+        line1:
+          delivery.line1 ||
+          delivery.address ||
+          delivery.description ||
+          '',
+
+        city:
+          delivery.city,
+
+        state:
+          delivery.state,
+
+        country:
+          delivery.country,
+
+        zip:
+          delivery.zip ||
+          '',
+
+        first_name:
+          delivery.firstName ||
+          'TunnelMouth',
+
+        last_name:
+          delivery.lastName ||
+          'Customer',
+
+        phone:
+          delivery.phone ||
+          '',
+
+        email:
+          delivery.email ||
+          ''
+
+      },
+
+
+      metadata: {
+
+        tunnelmouth_order_id:
+          orderId ||
+          null
+
+      },
+
+
+      shipment_purpose:
+        'personal',
+
+
+      parcel: {
+
+        description:
+          name,
+
+        items: [
+
+          {
+
+            description:
+              name,
+
+            name:
+              name,
+
+            currency:
+              'NGN',
+
+            value:
+              value,
+
+            weight:
+              parcelWeight,
+
+            quantity:
+              1
+
+          }
+
+        ],
+
+        weight:
+          parcelWeight,
+
+        weight_unit:
+          'kg'
+
+      }
+
+    };
+
+
+    console.log(
+      'Creating Terminal shipment:',
+      JSON.stringify(
+        shipmentRequest,
+        null,
+        2
+      )
+    );
+
+
+    const shipmentResponse =
+      await fetch(
+        'https://api.terminal.africa/v1/shipments/quick',
+        {
+
+          method:
+            'POST',
+
+          headers: {
+
+            'Authorization':
+              `Bearer ${process.env.TERMINAL_SECRET_KEY}`,
+
+            'Content-Type':
+              'application/json'
+
+          },
+
+          body:
+            JSON.stringify(
+              shipmentRequest
+            )
+
+        }
+      );
+
+
+    const shipmentData =
+      await shipmentResponse.json();
+
+
+    console.log(
+      'Terminal shipment response:',
+      JSON.stringify(
+        shipmentData,
+        null,
+        2
+      )
+    );
+
+
+    if (
+      !shipmentResponse.ok ||
+      shipmentData.status !== true
+    ) {
+
+      return res.status(
+        shipmentResponse.status || 400
+      ).json({
+
+        success:
+          false,
+
+        message:
+          shipmentData.message ||
+          'Unable to create Terminal shipment.'
+
+      });
+
+    }
+
+
+    const shipment =
+      shipmentData.data;
+
+
+    const shipmentId =
+      shipment.shipment_id ||
+      shipment.id;
+
+
+    if (!shipmentId) {
+
+      return res.status(500).json({
+
+        success:
+          false,
+
+        message:
+          'Terminal created the shipment but did not return a shipment ID.'
+
+      });
+
+    }
+
+
+    // =========================
+    // ARRANGE PICKUP
+    // =========================
+
+    const pickupRequest = {
+
+      shipment_id:
+        shipmentId,
+
+      rate_id:
+        rateId
+
+    };
+
+
+    console.log(
+      'Arranging Terminal pickup:',
+      pickupRequest
+    );
+
+
+    const pickupResponse =
+      await fetch(
+        'https://api.terminal.africa/v1/shipments/pickup',
+        {
+
+          method:
+            'POST',
+
+          headers: {
+
+            'Authorization':
+              `Bearer ${process.env.TERMINAL_SECRET_KEY}`,
+
+            'Content-Type':
+              'application/json'
+
+          },
+
+          body:
+            JSON.stringify(
+              pickupRequest
+            )
+
+        }
+      );
+
+
+    const pickupData =
+      await pickupResponse.json();
+
+
+    console.log(
+      'Terminal pickup response:',
+      JSON.stringify(
+        pickupData,
+        null,
+        2
+      )
+    );
+
+
+    if (
+      !pickupResponse.ok ||
+      pickupData.status !== true
+    ) {
+
+      return res.status(
+        pickupResponse.status || 400
+      ).json({
+
+        success:
+          false,
+
+        shipmentCreated:
+          true,
+
+        shipmentId,
+
+        message:
+          pickupData.message ||
+          'Shipment was created but Terminal could not arrange pickup.'
+
+      });
+
+    }
+
+
+    const arrangedShipment =
+      pickupData.data ||
+      {};
+
+
+    return res.json({
+
+      success:
+        true,
+
+      message:
+        'Terminal shipment arranged successfully.',
+
+      shipmentId,
+
+      rateId,
+
+      status:
+        arrangedShipment.status ||
+        'confirmed',
+
+      trackingNumber:
+        arrangedShipment.extras?.tracking_number ||
+        arrangedShipment.tracking_number ||
+        null,
+
+      trackingUrl:
+        arrangedShipment.extras?.tracking_url ||
+        arrangedShipment.extras?.carrier_tracking_url ||
+        arrangedShipment.tracking_url ||
+        null,
+
+      pickupDate:
+        arrangedShipment.pickup_date ||
+        null,
+
+      deliveryDate:
+        arrangedShipment.delivery_date ||
+        null,
+
+      shipment:
+        arrangedShipment
+
+    });
+
+
+  } catch (error) {
+
+    console.error(
+      'Terminal shipment arrangement error:',
+      error
+    );
+
+
+    return res.status(500).json({
+
+      success:
+        false,
+
+      message:
+        'Unable to arrange Terminal shipment.',
 
       error:
         error.message
