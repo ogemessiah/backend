@@ -6,6 +6,68 @@ const { firestore } = require('firebase-admin');
 
 const router = express.Router();
 
+// =========================
+// ARRANGE TERMINAL SHIPMENT
+// =========================
+
+const arrangeTerminalShipment = async ({
+  orderId,
+  orderData
+}) => {
+
+  const response = await axios.post(
+    'https://api.tunnelmouth.com/terminal/arrange',
+    {
+      pickup: orderData.pickup,
+      delivery: orderData.dropoff,
+
+      weight:
+        orderData.weight ||
+        orderData.packageWeight ||
+        1,
+
+      itemName:
+        orderData.packageItem ||
+        'Package',
+
+      itemValue:
+        orderData.itemValue ||
+        10000,
+
+      rateId:
+        orderData.rateId,
+
+      orderId,
+
+      customer: {
+        firstName:
+          orderData.customerName?.split(' ')[0] ||
+          'TunnelMouth',
+
+        lastName:
+          orderData.customerName
+            ?.split(' ')
+            .slice(1)
+            .join(' ') ||
+          'Customer',
+
+        phone:
+          orderData.customerPhone ||
+          '',
+
+        email:
+          orderData.customerEmail ||
+          ''
+      }
+    },
+    {
+      timeout: 30000
+    }
+  );
+
+  return response.data;
+};
+
 
 // =========================
 // HEALTH CHECK
@@ -181,20 +243,279 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     // CREATE ORDER
     // =========================
-    const orderRef = await db.collection('orders').add({
-      ...orderData,
-      originalPrice,
-      amountPaid: customerPays,
-      walletUsed,
-      voucherDiscount: voucherCost,
-      driverEarning,
-      platformFee,
-      paymentReference: reference,
-      paymentStatus: 'paid',
-      status: 'assigned',
-      reviewSubmitted: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+    const isTerminal =
+      orderData.courierType === 'terminal';
+
+    const isTunnelMouth =
+      orderData.courierType === 'tunnelmouth';
+
+    const orderRef =
+      await db.collection('orders').add({
+
+        ...orderData,
+
+        originalPrice,
+
+        amountPaid:
+          customerPays,
+
+        walletUsed,
+
+        voucherDiscount:
+          voucherCost,
+
+        driverEarning:
+          isTunnelMouth
+            ? driverEarning
+            : 0,
+
+        platformFee,
+
+        paymentReference:
+          reference,
+        
+        paymentStatus:
+          'paid',
+
+        status:
+          isTerminal
+            ? 'terminal_arranging'
+            : 'assigned',
+
+        reviewSubmitted:
+          false,
+
+        // terminal fields
+
+        terminalShipmentId:
+          null,
+
+        terminalTrackingNumber:
+          null,
+
+        terminalTrackingUrl:
+          null,
+
+        terminalStatus:
+          isTerminal
+            ? 'pending'
+            : null,
+
+        terminalRateId:
+          isTerminal
+            ? orderData.rateId || null
+            : null,
+
+        terminalPickupDate:
+          null,
+
+        terminalDeliveryDate:
+          null,
+
+        createdAt:
+          admin.firestore.FieldValue.serverTimestamp()
+
+       
+      });
+
+    // =========================
+    // TERMINAL SHIPMENT
+    // =========================
+
+   if (isTerminal) {
+
+     try {
+
+       console.log(
+         'Terminal courier selected. Arranging shipment...',
+         {
+           orderId: orderRef.id,
+           rateId: orderData.rateId
+         }
+       );
+
+       // Validate rateId before calling Terminal
+       if (!orderData.rateId) {
+
+         await orderRef.update({
+
+           status:
+             'terminal_arrangement_failed',
+
+           terminalStatus:
+             'failed',
+
+           terminalError:
+             'Missing Terminal rate ID',
+
+           terminalUpdatedAt:
+             admin.firestore.FieldValue.serverTimestamp()
+
+         });
+
+         return res.status(400).json({
+
+           success: false,
+
+           error:
+             'Terminal rate ID is missing.'
+
+         });
+
+       }
+
+
+       const terminalResult =
+         await arrangeTerminalShipment({
+
+           orderId:
+             orderRef.id,
+
+           orderData
+
+         });
+
+
+       console.log(
+         'Terminal arrangement result:',
+         JSON.stringify(
+           terminalResult,
+           null,
+           2
+         )
+       );
+
+
+       // =========================
+       // TERMINAL ARRANGEMENT FAILED
+       // =========================
+
+       if (
+         !terminalResult ||
+         !terminalResult.success
+       ) {
+
+         await orderRef.update({
+
+           status:
+             'terminal_arrangement_failed',
+
+           terminalStatus:
+             'failed',
+
+           terminalError:
+             terminalResult?.message ||
+             'Unable to arrange Terminal shipment.',
+
+           terminalUpdatedAt:
+             admin.firestore.FieldValue.serverTimestamp()
+
+         });
+
+         return res.status(502).json({
+
+           success: false,
+
+           error:
+             terminalResult?.message ||
+             'Payment succeeded but Terminal shipment arrangement failed.',
+
+           orderId:
+             orderRef.id
+
+         });
+
+       }
+
+
+       // =========================
+       // SAVE TERMINAL DETAILS
+       // =========================
+
+       await orderRef.update({
+
+         status:
+           'assigned',
+
+         terminalShipmentId:
+           terminalResult.shipmentId ||
+           null,
+
+         terminalTrackingNumber:
+           terminalResult.trackingNumber ||
+           null,
+
+         terminalTrackingUrl:
+           terminalResult.trackingUrl ||
+           null,
+
+         terminalStatus:
+           terminalResult.status ||
+           'confirmed',
+
+         terminalRateId:
+           terminalResult.rateId ||
+           orderData.rateId,
+
+         terminalPickupDate:
+           terminalResult.pickupDate ||
+           null,
+
+         terminalDeliveryDate:
+           terminalResult.deliveryDate ||
+           null,
+
+         terminalUpdatedAt:
+           admin.firestore.FieldValue.serverTimestamp()
+
+       });
+
+
+     } catch (terminalError) {
+
+       console.error(
+         'Terminal arrangement failed:',
+         terminalError.response?.data ||
+         terminalError.message
+       );
+
+
+       await orderRef.update({
+
+         status:
+           'terminal_arrangement_failed',
+
+         terminalStatus:
+           'failed',
+
+         terminalError:
+           terminalError.response?.data?.message ||
+           terminalError.message ||
+           'Terminal arrangement failed.',
+
+         terminalUpdatedAt:
+           admin.firestore.FieldValue.serverTimestamp()
+
+       });
+
+
+       return res.status(502).json({
+
+         success: false,
+
+         error:
+           'Payment succeeded, but the Terminal shipment could not be arranged.',
+
+         orderId:
+           orderRef.id
+
+       });
+
+     }
+
+   }
+
+
 
     // deduct customer wallet
     if (walletUsed> 0) {
@@ -237,37 +558,58 @@ router.post('/verify-payment', async (req, res) => {
     }
 
     // =========================
-    // UPDATE DRIVER WALLET
+    // UPDATE DRIVER WALLET ONLY FOR TUNNELMOUTH COURIERS
     // =========================
-    const courierRef = db.collection('couriers_live').doc(orderData.courierId);
+    if (isTunnelMouth) {
 
-    const courierSnap = await courierRef.get();
+      const courierRef =
+        db.collection('couriers_live')
+          .doc(orderData.courierId);
 
-    if (courierSnap.exists) {
-      const courierData = courierSnap.data();
+      const courierSnap =
+        await courierRef.get();
 
-      await courierRef.update({
-        walletBalance: admin.firestore.FieldValue.increment(driverEarning),
-        totalEarned: admin.firestore.FieldValue.increment(driverEarning),
-        totalDeliveries: admin.firestore.FieldValue.increment(1)
-        
-      });
+      if (courierSnap.exists) {
+        await courierRef.update({
+          walletBalance:
+            admin.firestore.FieldValue.increment(
+              driverEarning
+            ),
 
-      await db.collection('wallet_transactions').add({
+          totalEarned:
+            admin.firestore.FieldValue.increment(
+              driverEarning
+            ),
 
-        userId: orderData.courierId,
-        type: 'credit',
-        amount: driverEarning,
-        description: 'Delivery payment received',
-        orderId: orderRef.id,
-        createdAt:
-          admin.firestore.FieldValue.serverTimestamp()
+          totalDeliveries:
+            admin.firestore.FieldValue.increment(
+              1
+            )
+        });
 
-      });
+        await db
+          .collection('wallet_transactions')
+          .add({
 
-      
+            userId:
+              orderData.courierId,
 
-     
+            type:
+              'credit',
+
+            amount:
+              driverEarning,
+
+            description:
+              'Delivery payment received',
+
+            orderId:
+              orderRef.id,
+
+            createdAt:
+              admin.firestore.FieldValue.serverTimestamp()
+          });
+      }
     }
 
     // =========================
@@ -275,7 +617,8 @@ router.post('/verify-payment', async (req, res) => {
     // =========================
     return res.json({
       success: true,
-      orderId: orderRef.id
+      orderId: orderRef.id,
+      courierType: orderData.courierType || 'tunnelmouth'
     });
 
   } catch (err) {
@@ -450,11 +793,19 @@ router.post('/wallet-payment', async (req, res) => {
     // Earnings
     // -------------------------
 
+    const isTerminal =
+      orderData.courierType === 'terminal';
+
+    const isTunnelMouth =
+      orderData.courierType === 'tunnelmouth';
+
     const platformFee =
       Math.floor(originalPrice * 0.05) + 500;
 
     const driverEarning =
-      originalPrice - platformFee;
+      isTunnelMouth
+        ? originalPrice - platformFee
+        : 0;
 
     const voucherDiscount =
       originalPrice - finalPrice;
@@ -484,9 +835,39 @@ router.post('/wallet-payment', async (req, res) => {
 
         paymentReference: orderData.paymentReference || null,
 
-        status: 'assigned',
+        status:
+          isTerminal
+            ? 'terminal_arranging'
+            : 'assigned' ,
 
         reviewSubmitted: false,
+
+        // terminal fields
+
+        terminalShipmentId:
+          null,
+
+        terminalTrackingNumber:
+          null,
+
+        terminalTrackingUrl:
+          null,
+
+        terminalStatus:
+          isTerminal
+            ? 'pending'
+            : null,
+
+        terminalRateId:
+          isTerminal
+            ? orderData.rateId || null
+            : null,
+
+        terminalPickupDate:
+          null,
+
+        terminalDeliveryDate:
+          null,
 
         createdAt:
           admin.firestore.FieldValue.serverTimestamp()
@@ -514,42 +895,237 @@ router.post('/wallet-payment', async (req, res) => {
     // Driver Wallet
     // -------------------------
 
-    const courierRef =
-      db.collection('couriers_live').doc(orderData.courierId);
+    if (isTunnelMouth) {
 
-    await courierRef.update({
+      const courierRef = 
+        db.collection('couriers_live')
+          .doc(orderData.courierId);
 
-      walletBalance:
-        admin.firestore.FieldValue.increment(
-          driverEarning
-        ),
+      const courierSnap =
+        await courierRef.get();
 
-      totalEarned:
-        admin.firestore.FieldValue.increment(
-          driverEarning
-        ),
+      if (courierSnap.exists) {
 
-      totalDeliveries:
-        admin.firestore.FieldValue.increment(1)
+        await courierRef.update({
 
-    });
+          walletBalance:
+            admin.firestore.FieldValue.increment(
+              driverEarning
+            ),
 
-    await db.collection('wallet_transactions').add({
+          totalEarned:
+            admin.firestore.FieldValue.increment(
+              driverEarning
+            ),
 
-      userId: orderData.courierId,
+          totalDeliveries:
+            admin.firestore.FieldValue.increment(
+              1
+            )
+            
+        });
 
-      type: 'credit',
+        await db
+          .collection('wallet_transactions')
+          .add({
 
-      amount: driverEarning,
+            userId:
+              orderData.courierId,
 
-      description: 'Delivery payment received',
+            type:
+              'credit',
 
-      orderId: orderRef.id,
+            amount:
+              driverEarning,
 
-      createdAt:
-        admin.firestore.FieldValue.serverTimestamp()
+            description:
+              'Delivery payment received',
 
-    });
+            orderId:
+              orderRef.id,
+            
+            createdAt:
+              admin.firestore.FieldValue.serverTimestamp()
+
+          });
+      }
+    }
+
+    // -------------------------
+    // Terminal Shipment
+    // -------------------------
+
+    if (isTerminal) {
+
+      try {
+
+        if (!orderData.rateId) {
+
+          await orderRef.update({
+
+            status:
+              'terminal_arrangement_failed',
+
+            terminalStatus:
+              'failed',
+
+            terminalError:
+              'Missing Terminal rate ID',
+
+            terminalUpdatedAt:
+              admin.firestore.FieldValue.serverTimestamp()
+
+          });
+
+          return res.status(400).json({
+
+            success: false,
+
+            error:
+              'Terminal rate ID is missing.',
+
+            orderId:
+              orderRef.id
+
+          });
+
+        }
+
+        const terminalResult =
+          await arrangeTerminalShipment({
+
+            orderId:
+              orderRef.id,
+
+            orderData
+
+          });
+
+        console.log(
+          'Terminal wallet arrangement result:',
+          JSON.stringify(
+            terminalResult,
+            null,
+            2
+          )
+        );
+
+        if (
+          !terminalResult ||
+          !terminalResult.success
+        ) {
+
+          await orderRef.update({
+
+            status:
+              'terminal_arrangement_failed',
+
+            terminalStatus:
+              'failed',
+
+            terminalError:
+              terminalResult?.message ||
+              'Unable to arrange Terminal shipment.',
+
+            terminalUpdatedAt:
+              admin.firestore.FieldValue.serverTimestamp()
+
+          });
+
+          return res.status(502).json({
+
+            success: false,
+
+            error:
+              terminalResult?.message ||
+              'Payment succeeded but Terminal shipment arrangement failed.',
+
+            orderId:
+              orderRef.id
+
+          });
+
+        }
+
+        await orderRef.update({
+
+          status:
+            'assigned',
+
+          terminalShipmentId:
+            terminalResult.shipmentId ||
+            null,
+
+          terminalTrackingNumber:
+            terminalResult.trackingNumber ||
+            null,
+
+          terminalTrackingUrl:
+            terminalResult.trackingUrl ||
+            null,
+
+          terminalStatus:
+            terminalResult.status ||
+            'confirmed',
+
+          terminalRateId:
+            terminalResult.rateId ||
+            orderData.rateId,
+
+          terminalPickupDate:
+            terminalResult.pickupDate ||
+            null,
+
+          terminalDeliveryDate:
+            terminalResult.deliveryDate ||
+            null,
+
+          terminalUpdatedAt:
+            admin.firestore.FieldValue.serverTimestamp()
+
+        });
+
+      } catch (terminalError) {
+
+        console.error(
+          'Terminal wallet arrangement failed:',
+          terminalError.response?.data ||
+          terminalError.message
+        );
+
+        await orderRef.update({
+
+          status:
+            'terminal_arrangement_failed',
+
+          terminalStatus:
+            'failed',
+
+          terminalError:
+            terminalError.response?.data?.message ||
+            terminalError.message ||
+            'Terminal arrangement failed.',
+
+          terminalUpdatedAt:
+            admin.firestore.FieldValue.serverTimestamp()
+
+        });
+
+        return res.status(502).json({
+
+          success: false,
+
+          error:
+            'Payment succeeded, but the Terminal shipment could not be arranged.',
+
+          orderId:
+            orderRef.id
+
+        });
+
+      }
+
+    }
 
     // -------------------------
     // Voucher usage
