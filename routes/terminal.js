@@ -326,7 +326,7 @@ router.post('/quote', async (req, res) => {
           pickup.state,
 
         country:
-          pickup.country,
+          pickup.country || 'NG',
 
         zip:
           pickup.zip ||
@@ -367,7 +367,7 @@ router.post('/quote', async (req, res) => {
           delivery.state,
 
         country:
-          delivery.country,
+          delivery.country || 'NG',
 
         zip:
           delivery.zip ||
@@ -802,7 +802,7 @@ router.post('/arrange', async (req, res) => {
           pickup.state,
 
         country:
-          pickup.country,
+          pickup.country || 'NG',
 
         zip:
           pickup.zip ||
@@ -846,7 +846,7 @@ router.post('/arrange', async (req, res) => {
           delivery.state,
 
         country:
-          delivery.country,
+          delivery.country || 'NG',
 
         zip:
           delivery.zip ||
