@@ -304,8 +304,6 @@ router.post('/quote', async (req, res) => {
 
         line1:
           pickup.line1 ||
-          pickup.address ||
-          pickup.description ||
           '',
 
         line2:
@@ -327,11 +325,11 @@ router.post('/quote', async (req, res) => {
 
         first_name:
           pickup.firstName ||
-          'TunnelMouth',
+          '',
 
         last_name:
           pickup.lastName ||
-          'Customer',
+          '',
 
         phone:
           pickup.phone ||
@@ -347,8 +345,6 @@ router.post('/quote', async (req, res) => {
 
         line1:
           delivery.line1 ||
-          delivery.address ||
-          delivery.description ||
           '',
 
         line2:
@@ -370,11 +366,11 @@ router.post('/quote', async (req, res) => {
 
         first_name:
           delivery.firstName ||
-          'Tunnelmouth',
+          '',
 
         last_name:
           delivery.lastName ||
-          'Customer',
+          '',
 
         phone:
           delivery.phone ||
