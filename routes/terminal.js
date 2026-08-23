@@ -220,9 +220,11 @@ router.post('/quote', async (req, res) => {
 
 
     if (
-      !pickup.city ||
-      !pickup.state ||
-      !pickup.country
+      !pickup.line1||
+      !pickup.firstName ||
+      !pickup.lastName ||
+      !pickup.phone ||
+      !pickup.email
     ) {
 
       return res.status(400).json({
@@ -230,7 +232,7 @@ router.post('/quote', async (req, res) => {
         success: false,
 
         message:
-          'Pickup address must include city, state and country.'
+          'Pickup address requires line1, first name, last name, phone and email.'
 
       });
 
@@ -238,9 +240,11 @@ router.post('/quote', async (req, res) => {
 
 
     if (
-      !delivery.city ||
-      !delivery.state ||
-      !delivery.country
+      !delivery.line1 ||
+      !delivery.firstName ||
+      !delivery.lastName ||
+      !delivery.phone ||
+      !delivery.email
     ) {
 
       return res.status(400).json({
@@ -248,7 +252,7 @@ router.post('/quote', async (req, res) => {
         success: false,
 
         message:
-          'Delivery address must include city, state and country.'
+          'Delivery address requires line1, first name, last name, phone and email.'
 
       });
 
@@ -298,6 +302,16 @@ router.post('/quote', async (req, res) => {
 
       pickup_address: {
 
+        line1:
+          pickup.line1 ||
+          pickup.address ||
+          pickup.description ||
+          '',
+
+        line2:
+          pickup.line2 ||
+          '',
+
         city:
           pickup.city,
 
@@ -309,11 +323,37 @@ router.post('/quote', async (req, res) => {
 
         zip:
           pickup.zip ||
+          '',
+
+        first_name:
+          pickup.firstName ||
+          'TunnelMouth',
+
+        last_name:
+          pickup.lastName ||
+          'Customer',
+
+        phone:
+          pickup.phone ||
+          '',
+
+        email:
+          pickup.email ||
           ''
 
       },
 
       delivery_address: {
+
+        line1:
+          delivery.line1 ||
+          delivery.address ||
+          delivery.description ||
+          '',
+
+        line2:
+          delivery.line2 ||
+          '',
 
         city:
           delivery.city,
@@ -326,6 +366,22 @@ router.post('/quote', async (req, res) => {
 
         zip:
           delivery.zip ||
+          '',
+
+        first_name:
+          delivery.firstName ||
+          'Tunnelmouth',
+
+        last_name:
+          delivery.lastName ||
+          'Customer',
+
+        phone:
+          delivery.phone ||
+          '',
+
+        email:
+          delivery.email ||
           ''
 
       },
