@@ -7,6 +7,8 @@ const authRoutes = require('./routes/auth');
 
 const terminalRoutes = require('./routes/terminal');
 
+const tunnelmouthRoutes = require('./routes/tunnelmouth');
+
 const app = express();
 
 // =========================
@@ -21,6 +23,7 @@ app.use(express.json());
 app.use('/payment', paymentRoutes);
 app.use('/auth', authRoutes);
 app.use('/terminal', terminalRoutes);
+app.use('/tunnelmouth', tunnelmouthRoutes);
 
 // =========================
 // HEALTH CHECK
