@@ -4,6 +4,10 @@ const axios = require('axios');
 const { admin, db } = require('../firebaseAdmin');
 const { firestore } = require('firebase-admin');
 
+const {
+  mapTerminalStatus
+} = require('../utils/terminalStatus');
+
 const router = express.Router();
 
 // =========================
@@ -84,12 +88,15 @@ router.get('/', (req, res) => {
 // VERIFY PAYMENT (PAYSTACK)
 // =========================
 router.post('/verify-payment', async (req, res) => {
+
   try {
+
     const { reference, orderData } = req.body;
 
     // =========================
     // VALIDATION
     // =========================
+
     if (!reference || !orderData) {
       return res.status(400).json({
         success: false,
@@ -104,14 +111,23 @@ router.post('/verify-payment', async (req, res) => {
       });
     }
 
+    if (!orderData.userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing userId'
+      });
+    }
+
     // =========================
     // VERIFY PAYMENT WITH PAYSTACK
     // =========================
+
     const verify = await axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
         headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          Authorization:
+            `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
         },
         timeout: 15000
       }
@@ -119,40 +135,37 @@ router.post('/verify-payment', async (req, res) => {
 
     const payment = verify?.data?.data;
 
-    if (!payment || payment.status !== 'success') {
+    if (
+      !payment ||
+      payment.status !== 'success'
+    ) {
       return res.status(400).json({
         success: false,
         error: 'Payment not successful'
       });
     }
 
-    // prevent double processing
+    // =========================
+    // CALCULATE PRICE
+    // =========================
 
-    const existingOrderSnapshot = await db
-      .collection('orders')
-      .where('paymentReference', '==', reference)
-      .limit(1)
-      .get();
+    const originalPrice =
+      Number(orderData.originalPrice || 0);
 
-    if (!existingOrderSnapshot.empty) {
-
-      const existingOrder =
-        existingOrderSnapshot.docs[0];
-
-        return res.json({
-          success: true,
-          orderId: existingOrder.id,
-          alreadyProcessed: true
-        });
+    if (originalPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid order price'
+      });
     }
-
-    // =========================
-    // CALCULATE FEES
-    // =========================
-    const originalPrice = Number(orderData.originalPrice || 0);
 
     let finalPrice = originalPrice;
 
+    let voucher = null;
+
+    // =========================
+    // VALIDATE VOUCHER
+    // =========================
 
     if (orderData.voucherCode) {
 
@@ -168,7 +181,7 @@ router.post('/verify-payment', async (req, res) => {
         });
       }
 
-      const voucher = voucherSnap.data();
+      voucher = voucherSnap.data();
 
       if (!voucher.active) {
         return res.status(400).json({
@@ -177,76 +190,78 @@ router.post('/verify-payment', async (req, res) => {
         });
       }
 
-      if (voucher.expiry.toDate() < new Date()) {
+      if (
+        voucher.expiry &&
+        voucher.expiry.toDate() < new Date()
+      ) {
         return res.status(400).json({
           success: false,
           error: 'Voucher has expired'
         });
       }
 
-      if (voucher.maxUses && voucher.timesUsed >= voucher.maxUses) {
+      if (
+        voucher.maxUses &&
+        voucher.timesUsed >= voucher.maxUses
+      ) {
         return res.status(400).json({
           success: false,
           error: 'Voucher usage limit reached'
         });
       }
 
-      if (originalPrice < voucher.minimumOrder) {
+      if (
+        originalPrice <
+        Number(voucher.minimumOrder || 0)
+      ) {
         return res.status(400).json({
           success: false,
           error: 'Order does not meet minimum amount'
         });
       }
 
-      // First order check
-      const userSnap = await db
-        .collection('users')
-        .doc(orderData.userId)
-        .get();
+      // =========================
+      // CALCULATE DISCOUNT
+      // =========================
 
-      const user = userSnap.data();
-
-      if (
-        voucher.firstTimeOnly &&
-        user?.hasPlacedFirstOrder
-      ) {
-        return res.status(400).json({
-          success: false,
-          error: 'Voucher only valid for first order'
-        });
-      }
-
-      // Calculate discount
       if (voucher.type === 'fixed') {
 
-        finalPrice = Math.max(
-          originalPrice - voucher.value,
-          0
-        );
+        finalPrice =
+          Math.max(
+            originalPrice -
+            Number(voucher.value || 0),
+            0
+          );
 
       } else {
 
-        let amountOff = originalPrice * (voucher.value / 100);
+        let amountOff =
+          originalPrice *
+          (Number(voucher.value || 0) / 100);
 
         if (
           voucher.maximumDiscount &&
-          amountOff > voucher.maximumDiscount
+          amountOff >
+          Number(voucher.maximumDiscount)
         ) {
-          amountOff = voucher.maximumDiscount;
+
+          amountOff =
+            Number(voucher.maximumDiscount);
+
         }
-        finalPrice = Math.max(originalPrice - amountOff, 0);
 
+        finalPrice =
+          Math.max(
+            originalPrice -
+            amountOff,
+            0
+          );
       }
-
     }
-    
-   
-    const userRef = db.collection('users').doc(orderData.userId);
-    const userSnap = await userRef.get();
-    const walletBalance = Number(userSnap.data()?.walletBalance || 0);
-    const walletUsed = Math.min(walletBalance, finalPrice);
-    const amountExpected = finalPrice - walletUsed;
-    const customerPays = Number(payment.amount) / 100;
+
+    // =========================
+    // COURIER TYPE
+    // =========================
 
     const isTerminal =
       orderData.courierType === 'terminal';
@@ -254,508 +269,754 @@ router.post('/verify-payment', async (req, res) => {
     const isTunnelMouth =
       orderData.courierType === 'tunnelmouth';
 
+    // =========================
+    // CALCULATE EARNINGS
+    // =========================
+
     let platformFee = 0;
     let driverEarning = 0;
     let terminalBasePrice = 0;
 
     if (isTerminal) {
 
-      // Terminal quote already includes:
-      // 5% TunnelMouth fee + N500 fixed fee
-
       terminalBasePrice =
-        Number(orderData.terminalQuote?.basePrice || 0);
+        Number(
+          orderData.terminalQuote?.basePrice || 0
+        );
 
       platformFee =
-        Number(orderData.terminalQuote?.platformFee || 0) +
-        Number(orderData.terminalQuote?.fixedFee || 0);
+        Number(
+          orderData.terminalQuote?.platformFee || 0
+        ) +
+        Number(
+          orderData.terminalQuote?.fixedFee || 0
+        );
 
       driverEarning =
         terminalBasePrice;
 
     } else if (isTunnelMouth) {
 
-      // Tunnelmouth courier pricing
       platformFee =
-        Math.floor(originalPrice * 0.05) + 500;
+        Math.floor(
+          originalPrice * 0.05
+        ) + 500;
 
       driverEarning =
-        originalPrice - platformFee;
-
+        originalPrice -
+        platformFee;
     }
 
-    const voucherCost =
+    // =========================
+    // VOUCHER DISCOUNT
+    // =========================
+
+    const voucherDiscount =
       originalPrice - finalPrice;
 
-    
-
-    if (Math.abs(customerPays - amountExpected) > 0.01) {
-      return res.status(400).json({
-        success: false,
-        error: 'Payment amount mismatch'
-      });
-    }
-
     // =========================
-    // CREATE ORDER
+    // REFERENCES
     // =========================
-   
 
+    const userRef =
+      db
+        .collection('users')
+        .doc(orderData.userId);
+
+    /*
+     * IMPORTANT:
+     *
+     * Use the payment reference as the order ID.
+     *
+     * This gives us an idempotency mechanism.
+     */
     const orderRef =
-      await db.collection('orders').add({
-
-        ...orderData,
-
-        originalPrice,
-
-        terminalBasePrice:
-         isTerminal
-           ? terminalBasePrice
-           : 0,
-
-        amountPaid:
-          customerPays,
-
-        walletUsed,
-
-        voucherDiscount:
-          voucherCost,
-
-        driverEarning:
-          isTunnelMouth
-            ? driverEarning
-            : 0,
-
-        platformFee,
-
-        paymentReference:
-          reference,
-        
-        paymentStatus:
-          'paid',
-
-        status:
-          isTerminal
-            ? 'terminal_arranging'
-            : 'assigned',
-
-        reviewSubmitted:
-          false,
-
-        // terminal fields
-
-        terminalShipmentId:
-          null,
-
-        terminalTrackingNumber:
-          null,
-
-        terminalTrackingUrl:
-          null,
-
-        terminalStatus:
-          isTerminal
-            ? 'pending'
-            : null,
-
-        terminalRateId:
-          isTerminal
-            ? orderData.rateId || null
-            : null,
-
-        terminalPickupDate:
-          null,
-
-        terminalDeliveryDate:
-          null,
-
-        createdAt:
-          admin.firestore.FieldValue.serverTimestamp()
-
-       
-      });
+      db
+        .collection('orders')
+        .doc(reference);
 
     // =========================
-    // TERMINAL SHIPMENT
+    // ATOMIC TRANSACTION
+    // =========================
+    //
+    // This transaction:
+    //
+    // 1. Checks whether the payment was already processed
+    // 2. Reads the user's wallet
+    // 3. Calculates walletUsed
+    // 4. Verifies the amount Paystack charged
+    // 5. Deducts walletUsed atomically
+    // 6. Creates the order
+    // 7. Marks first order
+    // 8. Increments voucher usage
+    // 9. Creates wallet transaction
+    //
+    // This prevents two simultaneous requests from
+    // spending the same wallet balance.
     // =========================
 
-   if (isTerminal) {
+    const transactionResult =
+      await db.runTransaction(
+        async (transaction) => {
 
-     try {
+          // =========================
+          // CHECK DUPLICATE PAYMENT
+          // =========================
 
-       console.log(
-         'Terminal courier selected. Arranging shipment...',
-         {
-           orderId: orderRef.id,
-           rateId: orderData.rateId
-         }
-       );
+          const existingOrder =
+            await transaction.get(orderRef);
 
-       // Validate rateId before calling Terminal
-       if (!orderData.rateId) {
+          if (existingOrder.exists) {
 
-         await orderRef.update({
+            return {
+              alreadyProcessed: true,
+              orderId: orderRef.id
+            };
+          }
 
-           status:
-             'terminal_arrangement_failed',
+          // =========================
+          // READ USER
+          // =========================
 
-           terminalStatus:
-             'failed',
+          const userSnap =
+            await transaction.get(userRef);
 
-           terminalError:
-             'Missing Terminal rate ID',
+          if (!userSnap.exists) {
 
-           terminalUpdatedAt:
-             admin.firestore.FieldValue.serverTimestamp()
+            throw new Error(
+              'User account not found'
+            );
+          }
 
-         });
+          const user =
+            userSnap.data();
 
-         return res.status(400).json({
+          // =========================
+          // FIRST-TIME VOUCHER CHECK
+          // =========================
 
-           success: false,
+          if (
+            voucher &&
+            voucher.firstTimeOnly &&
+            user.hasPlacedFirstOrder
+          ) {
 
-           error:
-             'Terminal rate ID is missing.'
+            throw new Error(
+              'Voucher only valid for first order'
+            );
+          }
 
-         });
+          // =========================
+          // READ WALLET
+          // =========================
 
-       }
+          const walletBalance =
+            Number(
+              user.walletBalance || 0
+            );
 
+          // =========================
+          // CALCULATE WALLET USAGE
+          // =========================
 
-       const terminalResult =
-         await arrangeTerminalShipment({
+          const walletUsed =
+            Math.min(
+              walletBalance,
+              finalPrice
+            );
 
-           orderId:
-             orderRef.id,
+          // =========================
+          // AMOUNT CUSTOMER SHOULD
+          // PAY THROUGH PAYSTACK
+          // =========================
 
-           orderData
+          const amountExpected =
+            finalPrice -
+            walletUsed;
 
-         });
+          const customerPays =
+            Number(payment.amount) / 100;
 
+          // =========================
+          // VERIFY PAYMENT AMOUNT
+          // =========================
+          //
+          // This prevents someone from paying
+          // less than the amount actually required.
+          // =========================
 
-       console.log(
-         'Terminal arrangement result:',
-         JSON.stringify(
-           terminalResult,
-           null,
-           2
-         )
-       );
+          if (
+            Math.abs(
+              customerPays -
+              amountExpected
+            ) > 0.01
+          ) {
 
+            throw new Error(
+              'Payment amount mismatch'
+            );
+          }
 
-       // =========================
-       // TERMINAL ARRANGEMENT FAILED
-       // =========================
+          // =========================
+          // CREATE ORDER
+          // =========================
 
-       if (
-         !terminalResult ||
-         !terminalResult.success
-       ) {
+          transaction.set(
+            orderRef,
+            {
 
-         const refundAmount = customerPays;
+              ...orderData,
 
-         await orderRef.update({
+              originalPrice,
 
-           status:
-             'terminal_arrangement_failed',
+              terminalBasePrice:
+                isTerminal
+                  ? terminalBasePrice
+                  : 0,
 
-           paymentStatus:
-            'refunded',
+              amountPaid:
+                customerPays,
 
-           terminalStatus:
-             'failed',
+              walletUsed,
 
-           terminalError:
-             terminalResult?.message ||
-             'Unable to arrange Terminal shipment.',
+              voucherDiscount,
 
-           terminalUpdatedAt:
-             admin.firestore.FieldValue.serverTimestamp(),
+              driverEarning:
+                isTunnelMouth
+                  ? driverEarning
+                  : 0,
 
-           refundAmount,
+              platformFee,
 
-           refundStatus:
-             'completed',
+              paymentReference:
+                reference,
 
-           refundedAt:
-             admin.firestore.FieldValue.serverTimestamp()
+              paymentStatus:
+                'paid',
 
-         });
+              status:
+                isTerminal
+                  ? 'terminal_arranging'
+                  : 'assigned',
 
-         if (refundAmount > 0) {
-            await userRef.set({
+              reviewSubmitted:
+                false,
 
-              walletBalance:
-                admin.firestore.FieldValue.increment(
-                  refundAmount
-                ),
+              // =========================
+              // TERMINAL FIELDS
+              // =========================
 
-              walletLastUpdated:
-                admin.firestore.FieldValue.serverTimestamp()
-            }, {
+              terminalShipmentId:
+                null,
+
+              terminalTrackingNumber:
+                null,
+
+              terminalTrackingUrl:
+                null,
+
+              terminalStatus:
+                isTerminal
+                  ? 'pending'
+                  : null,
+
+              terminalRateId:
+                isTerminal
+                  ? orderData.rateId || null
+                  : null,
+
+              terminalPickupDate:
+                null,
+
+              terminalDeliveryDate:
+                null,
+
+              createdAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp()
+            }
+          );
+
+          // =========================
+          // DEDUCT WALLET ATOMICALLY
+          // =========================
+
+          if (walletUsed > 0) {
+
+            transaction.update(
+              userRef,
+              {
+
+                walletBalance:
+                  admin.firestore.FieldValue
+                    .increment(-walletUsed),
+
+                walletLastUpdated:
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
+
+              }
+            );
+
+          }
+
+          // =========================
+          // MARK FIRST ORDER
+          // =========================
+
+          transaction.set(
+            userRef,
+            {
+              hasPlacedFirstOrder:
+                true
+            },
+            {
               merge: true
-            });
+            }
+          );
 
-            await db
-              .collection('wallet_transactions')
-              .add({
+          // =========================
+          // WALLET TRANSACTION
+          // =========================
+
+          if (walletUsed > 0) {
+
+            const walletTransactionRef =
+              db
+                .collection('wallet_transactions')
+                .doc();
+
+            transaction.set(
+              walletTransactionRef,
+              {
 
                 userId:
                   orderData.userId,
 
                 type:
-                  'refund',
+                  'debit',
 
                 amount:
-                  refundAmount,
+                  walletUsed,
 
                 description:
-                  'Terminal shipment arrangement failed. Payment refunded to wallet.',
+                  'Wallet used toward delivery payment',
 
                 orderId:
                   orderRef.id,
 
                 createdAt:
-                  admin.firestore.FieldValue.serverTimestamp()
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
 
-              });
-         }
+              }
+            );
+          }
 
-         return res.status(502).json({
+          // =========================
+          // VOUCHER USAGE
+          // =========================
 
-           success: false,
+          if (orderData.voucherCode) {
 
-           error:
-             'Payment succeeded but Terminal shipment arrangement failed. Your payment has been refunded',
+            const voucherRef =
+              db
+                .collection('vouchers')
+                .doc(
+                  orderData.voucherCode
+                );
 
-           orderId:
-             orderRef.id,
-          
-           refunded:
-             true,
+            transaction.update(
+              voucherRef,
+              {
 
-           refundAmount
+                timesUsed:
+                  admin.firestore.FieldValue
+                    .increment(1)
 
-         });
+              }
+            );
+          }
 
-       }
+          return {
+            alreadyProcessed: false,
+            orderId: orderRef.id,
+            walletUsed,
+            customerPays,
+            amountExpected
+          };
+        }
+      );
 
+    // =========================
+    // ALREADY PROCESSED
+    // =========================
 
-       // =========================
-       // SAVE TERMINAL DETAILS
-       // =========================
+    if (
+      transactionResult.alreadyProcessed
+    ) {
 
-       await orderRef.update({
+      return res.json({
 
-         status:
-           'assigned',
+        success:
+          true,
 
-         terminalShipmentId:
-           terminalResult.shipmentId ||
-           null,
+        orderId:
+          transactionResult.orderId,
 
-         terminalTrackingNumber:
-           terminalResult.trackingNumber ||
-           null,
+        alreadyProcessed:
+          true
 
-         terminalTrackingUrl:
-           terminalResult.trackingUrl ||
-           null,
-
-         terminalStatus:
-           terminalResult.status ||
-           'confirmed',
-
-         terminalRateId:
-           terminalResult.rateId ||
-           orderData.rateId,
-
-         terminalPickupDate:
-           terminalResult.pickupDate ||
-           null,
-
-         terminalDeliveryDate:
-           terminalResult.deliveryDate ||
-           null,
-
-         terminalUpdatedAt:
-           admin.firestore.FieldValue.serverTimestamp()
-
-       });
-
-
-     } catch (terminalError) {
-
-       console.error(
-         'Terminal arrangement failed:',
-         terminalError.response?.data ||
-         terminalError.message
-       );
-
-       const refundAmount = customerPays;
-
-
-       await orderRef.update({
-
-         status:
-           'terminal_arrangement_failed',
-
-         terminalStatus:
-           'failed',
-
-         terminalError:
-           terminalError.response?.data?.message ||
-           terminalError.message ||
-           'Terminal arrangement failed.',
-
-         terminalUpdatedAt:
-           admin.firestore.FieldValue.serverTimestamp(),
-
-         paymentStatus:
-           'refunded',
-
-         refundAmount,
-
-         refundStatus:
-           'completed',
-
-         refundedAt:
-           admin.firestore.FieldValue.serverTimestamp()
-
-       });
-
-       if (refundAmount > 0) {
-
-         await userRef.set({
-
-           walletBalance:
-             admin.firestore.FieldValue.increment(
-              refundAmount
-             ),
-
-           walletLastUpdated:
-             admin.firestore.FieldValue.serverTimestamp()
-
-         }, {
-           merge: true
-         });
-
-         await db 
-           .collection('wallet_transactions')
-           .add({
-
-             userId:
-               orderData.userId,
-
-             type:
-               'refund',
-
-             amount:
-               refundAmount,
-
-             description:
-               'Terminal shipment arrangement failed. Payment refunded to wallet',
-
-             orderId:
-               orderRef.id,
-
-             createdAt:
-               admin.firestore.FieldValue.serverTimestamp()
-
-           });
-       }
-
-
-       return res.status(502).json({
-
-         success: false,
-
-         error:
-           'Payment succeeded, but the Terminal shipment could not be arranged.',
-
-         orderId:
-           orderRef.id
-
-       });
-
-     }
-
-   }
-
-
-
-    // deduct customer wallet
-    if (walletUsed> 0) {
-      await userRef.update({
-        walletBalance:
-          admin.firestore.FieldValue.increment(-walletUsed)
-      });
-      await db.collection('wallet_transactions').add({
-        userId: orderData.userId,
-        type: 'debit',
-        amount: walletUsed,
-        description: 'Wallet payment',
-        orderId: orderRef.id,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
     }
 
-    if (orderData.userId) {
-      await db
-        .collection('users')
-        .doc(orderData.userId)
-        .set(
-          {
-            hasPlacedFirstOrder: true
-          },
-          {
-            merge: true
+    // =========================
+    // VALUES FROM TRANSACTION
+    // =========================
+
+    const orderId =
+      transactionResult.orderId;
+
+    const walletUsed =
+      Number(
+        transactionResult.walletUsed || 0
+      );
+
+    const customerPays =
+      Number(
+        transactionResult.customerPays || 0
+      );
+
+    // =========================
+    // TERMINAL SHIPMENT
+    // =========================
+
+    if (isTerminal) {
+
+      try {
+
+        // =========================
+        // RATE ID REQUIRED
+        // =========================
+
+        if (!orderData.rateId) {
+
+          throw new Error(
+            'Missing Terminal rate ID'
+          );
+        }
+
+        // =========================
+        // ARRANGE SHIPMENT
+        // =========================
+
+        const terminalResult =
+          await arrangeTerminalShipment({
+
+            orderId,
+
+            orderData
+
+          });
+
+        console.log(
+          'Terminal arrangement result:',
+          JSON.stringify(
+            terminalResult,
+            null,
+            2
+          )
+        );
+
+        // =========================
+        // ARRANGEMENT FAILED
+        // =========================
+
+        if (
+          !terminalResult ||
+          !terminalResult.success
+        ) {
+
+          throw new Error(
+            terminalResult?.message ||
+            'Unable to arrange Terminal shipment.'
+          );
+        }
+
+        // =========================
+        // SAVE TERMINAL DETAILS
+        // =========================
+
+        await db
+          .collection('orders')
+          .doc(orderId)
+          .update({
+
+            status:
+              'assigned',
+
+            terminalShipmentId:
+              terminalResult.shipmentId ||
+              null,
+
+            terminalTrackingNumber:
+              terminalResult.trackingNumber ||
+              null,
+
+            terminalTrackingUrl:
+              terminalResult.trackingUrl ||
+              null,
+
+            terminalStatus:
+              terminalResult.status ||
+              'confirmed',
+
+            terminalRateId:
+              terminalResult.rateId ||
+              orderData.rateId,
+
+            terminalPickupDate:
+              terminalResult.pickupDate ||
+              null,
+
+            terminalDeliveryDate:
+              terminalResult.deliveryDate ||
+              null,
+
+            terminalUpdatedAt:
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
+          });
+
+      } catch (terminalError) {
+
+        console.error(
+          'Terminal arrangement failed:',
+          terminalError.response?.data ||
+          terminalError.message
+        );
+
+        // =========================
+        // REFUND EVERYTHING
+        // =========================
+        //
+        // Because walletUsed has already been
+        // deducted atomically, we must refund:
+        //
+        // Paystack payment
+        // +
+        // wallet amount
+        //
+        // back into the customer's wallet.
+        // =========================
+
+        const refundAmount =
+          customerPays +
+          walletUsed;
+
+        await db.runTransaction(
+          async (transaction) => {
+
+            const refundOrderRef =
+              db
+                .collection('orders')
+                .doc(orderId);
+
+            const refundUserRef =
+              db
+                .collection('users')
+                .doc(orderData.userId);
+
+            const orderSnap =
+              await transaction.get(
+                refundOrderRef
+              );
+
+            if (!orderSnap.exists) {
+
+              throw new Error(
+                'Order not found during refund'
+              );
+            }
+
+            const order =
+              orderSnap.data();
+
+            // =========================
+            // PREVENT DOUBLE REFUND
+            // =========================
+
+            if (
+              order.paymentStatus ===
+              'refunded'
+            ) {
+
+              return;
+            }
+
+            // =========================
+            // REFUND CUSTOMER WALLET
+            // =========================
+
+            if (refundAmount > 0) {
+
+              transaction.update(
+                refundUserRef,
+                {
+
+                  walletBalance:
+                    admin.firestore.FieldValue
+                      .increment(
+                        refundAmount
+                      ),
+
+                  walletLastUpdated:
+                    admin.firestore.FieldValue
+                      .serverTimestamp()
+
+                }
+              );
+            }
+
+            // =========================
+            // UPDATE ORDER
+            // =========================
+
+            transaction.update(
+              refundOrderRef,
+              {
+
+                status:
+                  'terminal_arrangement_failed',
+
+                terminalStatus:
+                  'failed',
+
+                paymentStatus:
+                  'refunded',
+
+                terminalError:
+                  terminalError.message,
+
+                refundAmount,
+
+                refundMethod:
+                  'wallet',
+
+                refundedAt:
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
+
+              }
+            );
+
+            // =========================
+            // REFUND TRANSACTION
+            // =========================
+
+            if (refundAmount > 0) {
+
+              const refundTransactionRef =
+                db
+                  .collection(
+                    'wallet_transactions'
+                  )
+                  .doc();
+
+              transaction.set(
+                refundTransactionRef,
+                {
+
+                  userId:
+                    orderData.userId,
+
+                  type:
+                    'refund',
+
+                  amount:
+                    refundAmount,
+
+                  description:
+                    'Terminal shipment failed. Payment refunded to wallet.',
+
+                  orderId,
+
+                  createdAt:
+                    admin.firestore.FieldValue
+                      .serverTimestamp()
+
+                }
+              );
+            }
           }
         );
-    }
 
-    if (orderData.voucherCode) {
-      await db
-        .collection('vouchers')
-        .doc(orderData.voucherCode)
-        .update({
-          timesUsed:
-            admin.firestore.FieldValue.increment(1)
+        return res.status(502).json({
+
+          success:
+            false,
+
+          error:
+            'Terminal shipment could not be arranged. Your payment has been refunded to your wallet.',
+
+          orderId,
+
+          refunded:
+            true,
+
+          refundAmount
+
         });
+      }
     }
 
     // =========================
-    // UPDATE DRIVER WALLET ONLY FOR TUNNELMOUTH COURIERS
+    // TUNNELMOUTH DRIVER WALLET
     // =========================
+    //
+    // Only TunnelMouth couriers receive
+    // driver earnings.
+    // =========================
+
     if (isTunnelMouth) {
 
       const courierRef =
-        db.collection('couriers_live')
-          .doc(orderData.courierId);
+        db
+          .collection('couriers_live')
+          .doc(
+            orderData.courierId
+          );
 
       const courierSnap =
         await courierRef.get();
 
       if (courierSnap.exists) {
+
         await courierRef.update({
+
           walletBalance:
-            admin.firestore.FieldValue.increment(
-              driverEarning
-            ),
+            admin.firestore.FieldValue
+              .increment(
+                driverEarning
+              ),
 
           totalEarned:
-            admin.firestore.FieldValue.increment(
-              driverEarning
-            ),
+            admin.firestore.FieldValue
+              .increment(
+                driverEarning
+              ),
 
           totalDeliveries:
-            admin.firestore.FieldValue.increment(
-              1
-            )
+            admin.firestore.FieldValue
+              .increment(1)
+
         });
 
         await db
-          .collection('wallet_transactions')
+          .collection(
+            'wallet_transactions'
+          )
           .add({
 
             userId:
@@ -770,41 +1031,52 @@ router.post('/verify-payment', async (req, res) => {
             description:
               'Delivery payment received',
 
-            orderId:
-              orderRef.id,
+            orderId,
 
             createdAt:
-              admin.firestore.FieldValue.serverTimestamp()
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
           });
       }
     }
 
     // =========================
-    // SUCCESS RESPONSE
+    // SUCCESS
     // =========================
+
     return res.json({
-      success: true,
-      orderId: orderRef.id,
-      courierType: orderData.courierType || 'tunnelmouth'
+
+      success:
+        true,
+
+      orderId,
+
+      courierType:
+        orderData.courierType ||
+        'tunnelmouth'
+
     });
 
   } catch (err) {
 
-    console.error("FULL ERROR");
-    console.error(err);
+    console.error(
+      'Verify payment error:',
+      err
+    );
 
-    
-    console.error("CODE:",err.code);
-    console.error("MESSAGE:", err.message)
-    console.error("DETAILS:", err.details)
-    console.error("METADATA:", err.metadata?.getMap?.());
+    return res.status(400).json({
 
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error"
+      success:
+        false,
+
+      message:
+        err.message ||
+        'Payment verification failed'
+
     });
-    
   }
+
 });
 
 // =========================
@@ -1946,57 +2218,354 @@ router.post('/decline-order', async (req, res) => {
 
 
 
-router.post('/updateCourierRating', async (req, res) => {
+// =========================
+// SUBMIT COURIER REVIEW
+// =========================
+router.post('/submit-review', async (req, res) => {
 
   try {
 
-    const { courierId } = req.body;
+    const {
+      courierId,
+      courierName,
+      customerId,
+      customerName,
+      orderId,
+      rating,
+      review
+    } = req.body;
 
-    if (!courierId) {
+
+    // =========================
+    // VALIDATION
+    // =========================
+
+    if (
+      !courierId ||
+      !orderId ||
+      !customerId
+    ) {
+
       return res.status(400).json({
         success: false,
-        message: 'Missing courierId'
+        message:
+          'Missing required review information'
       });
+
     }
 
-    const reviewsSnapshot = await db
-      .collection('courier_reviews')
-      .where('courierId', '==', courierId)
-      .get();
 
-    let totalReviews = reviewsSnapshot.size;
+    const numericRating =
+      Number(rating);
+
+
+    if (
+      numericRating < 1 ||
+      numericRating > 5
+    ) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'Rating must be between 1 and 5'
+      });
+
+    }
+
+
+    const cleanReview =
+      String(review || '').trim();
+
+
+    if (!cleanReview) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'Review cannot be empty'
+      });
+
+    }
+
+
+    // =========================
+    // REFERENCES
+    // =========================
+
+    const orderRef =
+      db
+        .collection('orders')
+        .doc(orderId);
+
+
+    const courierRef =
+      db
+        .collection('couriers_live')
+        .doc(courierId);
+
+
+    const reviewRef =
+      db
+        .collection('courier_reviews')
+        .doc();
+
+
+    // =========================
+    // TRANSACTION
+    // =========================
+
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
+
+          // =========================
+          // READ ORDER
+          // =========================
+
+          const orderSnap =
+            await transaction.get(
+              orderRef
+            );
+
+
+          if (!orderSnap.exists) {
+
+            throw new Error(
+              'Order not found'
+            );
+
+          }
+
+
+          const order =
+            orderSnap.data();
+
+
+          // =========================
+          // VERIFY COURIER
+          // =========================
+
+          if (
+            order.courierId !== courierId
+          ) {
+
+            throw new Error(
+              'This courier is not assigned to this order'
+            );
+
+          }
+
+
+          // =========================
+          // VERIFY CUSTOMER
+          // =========================
+
+          if (
+            order.userId !== customerId
+          ) {
+
+            throw new Error(
+              'You are not authorized to review this order'
+            );
+
+          }
+
+
+          // =========================
+          // CHECK EXISTING REVIEW
+          // =========================
+
+          if (
+            order.reviewSubmitted === true
+          ) {
+
+            return {
+              alreadyReviewed: true
+            };
+
+          }
+
+
+          // =========================
+          // CREATE REVIEW
+          // =========================
+
+          transaction.set(
+            reviewRef,
+            {
+
+              courierId,
+
+              courierName:
+                courierName ||
+                order.courierName ||
+                '',
+
+              customerId,
+
+              customerName:
+                customerName ||
+                '',
+
+              orderId,
+
+              rating:
+                numericRating,
+
+              review:
+                cleanReview,
+
+              createdAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp()
+
+            }
+          );
+
+
+          // =========================
+          // MARK ORDER REVIEWED
+          // =========================
+
+          transaction.update(
+            orderRef,
+            {
+
+              reviewSubmitted:
+                true,
+
+              reviewSubmittedAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp()
+
+            }
+          );
+
+
+          return {
+            alreadyReviewed: false
+          };
+
+        }
+      );
+
+
+    // =========================
+    // ALREADY REVIEWED
+    // =========================
+
+    if (
+      result.alreadyReviewed
+    ) {
+
+      return res.status(409).json({
+
+        success: false,
+
+        message:
+          'You have already reviewed this delivery.'
+
+      });
+
+    }
+
+
+    // =========================
+    // RECALCULATE COURIER RATING
+    // =========================
+
+    const reviewsSnapshot =
+      await db
+        .collection('courier_reviews')
+        .where(
+          'courierId',
+          '==',
+          courierId
+        )
+        .get();
+
+
     let totalRating = 0;
 
-    reviewsSnapshot.forEach(doc => {
-      totalRating += Number(doc.data().rating || 0);
-    });
+    reviewsSnapshot.forEach(
+      (reviewDoc) => {
+
+        totalRating +=
+          Number(
+            reviewDoc.data().rating || 0
+          );
+
+      }
+    );
+
+
+    const totalReviews =
+      reviewsSnapshot.size;
+
 
     const averageRating =
       totalReviews > 0
-        ? Number((totalRating / totalReviews).toFixed(1))
+
+        ? Number(
+            (
+              totalRating /
+              totalReviews
+            ).toFixed(1)
+          )
+
         : 0;
 
-    await db
-      .collection('couriers_live')
-      .doc(courierId)
-      .update({
-        averageRating,
-        totalReviews
-      });
+
+    // =========================
+    // UPDATE COURIER
+    // =========================
+
+    await courierRef.update({
+
+      averageRating,
+
+      totalReviews
+
+    });
+
+
+    // =========================
+    // SUCCESS
+    // =========================
 
     return res.json({
+
       success: true,
+
+      message:
+        'Review submitted successfully',
+
+      reviewId:
+        reviewRef.id,
+
       averageRating,
+
       totalReviews
+
     });
+
 
   } catch (err) {
 
-    console.error(err);
+    console.error(
+      'Submit review error:',
+      err
+    );
 
-    return res.status(500).json({
+
+    return res.status(400).json({
+
       success: false,
-      message: err.message
+
+      message:
+        err.message ||
+        'Unable to submit review'
+
     });
 
   }

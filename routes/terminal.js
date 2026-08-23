@@ -1,5 +1,14 @@
 const express = require('express');
 
+const {
+  admin,
+  db
+} = require('../firebaseAdmin');
+
+const {
+  mapTerminalStatus
+} = require('../utils/terminalStatus');
+
 const router = express.Router();
 
 
@@ -1105,6 +1114,70 @@ router.post('/arrange', async (req, res) => {
       pickupData.data ||
       {};
 
+    // =========================
+    // SAVE TERMINAL SHIPMENT TO ORDER
+    // =========================
+
+    if (orderId) {
+
+      await db
+        .collection('orders')
+        .doc(orderId)
+        .update({
+
+          terminalShipmentId:
+            shipmentId,
+
+          terminalStatus:
+            arrangedShipment.status ||
+            'confirmed',
+
+          customerStatus:
+            'confirmed',
+
+          status:
+            'confirmed',
+
+          terminalTrackingNumber:
+            arrangedShipment.extras?.tracking_number ||
+            arrangedShipment.tracking_number ||
+            null,
+
+          terminalTrackingUrl:
+            arrangedShipment.extras?.tracking_url ||
+            arrangedShipment.extras?.carrier_tracking_url ||
+            arrangedShipment.tracking_url ||
+            null,
+
+          terminalPickupDate:
+            arrangedShipment.pickup_date ||
+            null,
+
+          terminalDeliveryDate:
+            arrangedShipment.delivery_date ||
+            null,
+
+          terminalCreatedAt:
+            admin.firestore.FieldValue.serverTimestamp(),
+
+          terminalUpdatedAt:
+            admin.firestore.FieldValue.serverTimestamp()
+
+        });
+
+      console.log(
+        'Terminal shipment saved to TunnelMouth order:',
+        {
+          orderId,
+          shipmentId
+        }
+      );
+
+    }
+
+
+
+
 
     return res.json({
 
@@ -1166,6 +1239,434 @@ router.post('/arrange', async (req, res) => {
       error:
         error.message
 
+    });
+
+  }
+
+});
+
+// =========================
+// CREATE TUNNELMOUTH WEBHOOK
+// POST /terminal/create-webhook
+// =========================
+
+router.post('/create-webhook', async (req, res) => {
+
+  try {
+
+    const webhookResponse = await fetch(
+      'https://api.terminal.africa/v1/webhooks',
+      {
+        method: 'POST',
+
+        headers: {
+          'Authorization':
+            `Bearer ${process.env.TERMINAL_SECRET_KEY}`,
+
+          'Content-Type':
+            'application/json'
+        },
+
+        body: JSON.stringify({
+
+          name:
+            'TunnelMouth Shipment Tracking',
+
+          active:
+            true,
+
+          live:
+            true,
+
+          url:
+            'https://api.tunnelmouth.com/terminal/webhook',
+
+          events: [
+
+            'shipment.created',
+
+            'shipment.updated',
+
+            'shipment.in-transit',
+
+            'shipment.delivered',
+
+            'shipment.cancelled'
+
+          ]
+
+        })
+      }
+    );
+
+
+    const data =
+      await webhookResponse.json();
+
+
+    console.log(
+      'Terminal webhook creation response:',
+      JSON.stringify(
+        data,
+        null,
+        2
+      )
+    );
+
+
+    if (!webhookResponse.ok) {
+
+      return res.status(
+        webhookResponse.status
+      ).json({
+
+        success:
+          false,
+
+        message:
+          data.message ||
+          'Unable to create Terminal webhook.',
+
+        terminalResponse:
+          data
+
+      });
+
+    }
+
+
+    return res.json({
+
+      success:
+        true,
+
+      message:
+        'TunnelMouth Terminal webhook created successfully.',
+
+      webhook:
+        data.data
+
+    });
+
+
+  } catch (error) {
+
+    console.error(
+      'Create Terminal webhook error:',
+      error
+    );
+
+    return res.status(500).json({
+
+      success:
+        false,
+
+      message:
+        error.message
+
+    });
+
+  }
+
+});
+
+
+
+// =========================
+// TERMINAL WEBHOOK
+// POST /terminal/webhook
+// =========================
+
+router.post('/webhook', async (req, res) => {
+
+  try {
+
+    // =========================
+    // VERIFY TERMINAL SIGNATURE
+    // =========================
+
+   // terminal webhook
+
+   console.log(
+     '========== TERMINAL WEBHOOK =========='
+   );
+
+   console.log(
+    'Terminal webhook headers:',
+    req.headers
+   );
+
+   console.log(
+    'Terminal webhook body:',
+    JSON.stringify(
+      req.body,
+      null,
+      2
+    )
+   );
+
+
+    // =========================
+    // TERMINAL EVENT
+    // =========================
+
+    const {
+      event,
+      data
+    } = req.body;
+
+    console.log(
+      'Terminal webhook received:',
+      event
+    );
+
+
+    // =========================
+    // ONLY PROCESS SHIPMENT EVENTS
+    // =========================
+
+    if (
+      !event ||
+      !event.startsWith('shipment.')
+    ) {
+
+      return res.json({
+        success: true,
+        ignored: true
+      });
+
+    }
+
+
+    // =========================
+    // GET SHIPMENT
+    // =========================
+
+    const shipment =
+      data || {};
+
+
+    const shipmentId =
+      shipment.shipment_id ||
+      shipment.id ||
+      null;
+
+
+    if (!shipmentId) {
+
+      console.error(
+        'Terminal webhook has no shipment ID',
+        req.body
+      );
+
+      return res.json({
+        success: true,
+        ignored: true
+      });
+
+    }
+
+
+    // =========================
+    // FIND TUNNELMOUTH ORDER
+    // =========================
+
+    const ordersSnapshot =
+      await db
+        .collection('orders')
+        .where(
+          'terminalShipmentId',
+          '==',
+          shipmentId
+        )
+        .limit(1)
+        .get();
+
+
+    if (
+      ordersSnapshot.empty
+    ) {
+
+      console.log(
+        'No TunnelMouth order found for Terminal shipment:',
+        shipmentId
+      );
+
+      return res.json({
+        success: true,
+        ignored: true
+      });
+
+    }
+
+
+    const orderDoc =
+      ordersSnapshot.docs[0];
+
+    const orderRef =
+      orderDoc.ref;
+
+    const order =
+      orderDoc.data();
+
+
+    // =========================
+    // DETERMINE TERMINAL STATUS
+    // =========================
+
+    const terminalStatus =
+      shipment.status ||
+      null;
+
+
+    const customerStatus =
+      mapTerminalStatus(
+        terminalStatus
+      );
+
+
+    // =========================
+    // UPDATE ORDER
+    // =========================
+
+    const updateData = {
+
+      terminalStatus:
+        terminalStatus,
+
+      customerStatus:
+        customerStatus,
+
+      status:
+        customerStatus,
+
+      terminalUpdatedAt:
+        admin.firestore.FieldValue
+          .serverTimestamp()
+
+    };
+
+
+    // =========================
+    // TRACKING NUMBER
+    // =========================
+
+    const trackingNumber =
+      shipment.extras?.tracking_number ||
+      shipment.tracking_number ||
+      null;
+
+
+    if (trackingNumber) {
+
+      updateData.terminalTrackingNumber =
+        trackingNumber;
+
+    }
+
+
+    // =========================
+    // TRACKING URL
+    // =========================
+
+    const trackingUrl =
+      shipment.extras?.tracking_url ||
+      shipment.extras?.carrier_tracking_url ||
+      shipment.tracking_url ||
+      null;
+
+
+    if (trackingUrl) {
+
+      updateData.terminalTrackingUrl =
+        trackingUrl;
+
+    }
+
+
+    // =========================
+    // PICKUP DATE
+    // =========================
+
+    if (shipment.pickup_date) {
+
+      updateData.terminalPickupDate =
+        shipment.pickup_date;
+
+    }
+
+
+    // =========================
+    // DELIVERY DATE
+    // =========================
+
+    if (shipment.delivery_date) {
+
+      updateData.terminalDeliveryDate =
+        shipment.delivery_date;
+
+    }
+
+
+    // =========================
+    // TERMINAL EVENTS
+    // =========================
+
+    if (
+      Array.isArray(
+        shipment.events
+      )
+    ) {
+
+      updateData.terminalEvents =
+        shipment.events;
+
+    }
+
+
+    // =========================
+    // UPDATE FIRESTORE
+    // =========================
+
+    await orderRef.update(
+      updateData
+    );
+
+
+    console.log(
+      'TunnelMouth order updated from Terminal webhook:',
+      {
+        orderId: orderDoc.id,
+        shipmentId,
+        event,
+        terminalStatus,
+        customerStatus
+      }
+    );
+
+
+    // =========================
+    // SUCCESS
+    // =========================
+
+    return res.json({
+      success: true,
+      orderId: orderDoc.id,
+      customerStatus
+    });
+
+
+  } catch (error) {
+
+    console.error(
+      'Terminal webhook error:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Webhook processing failed'
     });
 
   }
