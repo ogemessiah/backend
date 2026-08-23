@@ -9,6 +9,33 @@ const {
   mapTerminalStatus
 } = require('../utils/terminalStatus');
 
+
+// =========================
+// FORMAT NIGERIAN PHONE
+// =========================
+
+const formatNigerianPhone = (phone) => {
+
+  const cleaned = String(phone || '')
+    .replace(/\s+/g, '')
+    .replace(/-/g, '');
+
+  if (cleaned.startsWith('+234')) {
+    return cleaned;
+  }
+
+  if (cleaned.startsWith('234')) {
+    return `+${cleaned}`;
+  }
+
+  if (cleaned.startsWith('0')) {
+    return `+234${cleaned.slice(1)}`;
+  }
+
+  return cleaned;
+};
+
+
 const router = express.Router();
 
 
@@ -819,9 +846,12 @@ router.post('/arrange', async (req, res) => {
           'Customer',
 
         phone:
-          pickup.phone ||
-          customer?.phone ||
-          '',
+          formatNigerianPhone(
+            pickup.phone ||
+            customer?.phone ||
+            ''
+          ),
+          
 
         email:
           pickup.email ||
