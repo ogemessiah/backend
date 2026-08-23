@@ -8,6 +8,28 @@ const {
   mapTerminalStatus
 } = require('../utils/terminalStatus');
 
+// format number
+
+const formatNigerianPhone = (phone) => {
+  const cleaned = String(phone || '')
+    .replace(/\s+/g, '')
+    .replace(/-/g, '');
+
+  if (cleaned.startsWith('+234')) {
+    return cleaned;
+  }
+
+  if (cleaned.startsWith('234')) {
+    return `+${cleaned}`;
+  }
+
+  if (cleaned.startsWith('0')) {
+    return `+234${cleaned.slice(1)}`;
+  }
+
+  return cleaned;
+};
+
 const router = express.Router();
 
 // =========================
@@ -56,8 +78,11 @@ const arrangeTerminalShipment = async ({
           'Customer',
 
         phone:
-          orderData.customerPhone ||
-          '',
+          formatNigerianPhone(
+            orderData.customerPhone || ''
+
+          ),
+          
 
         email:
           orderData.customerEmail ||
