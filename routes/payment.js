@@ -888,7 +888,7 @@ router.post('/verify-payment', async (req, res) => {
               {
 
                 status:
-                  'terminal_arrangement_failed',
+                  'failed',
 
                 terminalStatus:
                   'failed',
@@ -1761,7 +1761,7 @@ router.post('/wallet-payment', async (req, res) => {
               {
 
                 status:
-                  'terminal_arrangement_failed',
+                  'failed',
 
                 terminalStatus:
                   'failed',
