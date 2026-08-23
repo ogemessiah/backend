@@ -22,8 +22,8 @@ const arrangeTerminalShipment = async ({
   const response = await axios.post(
     'https://api.tunnelmouth.com/terminal/arrange',
     {
-      pickup: orderData.pickup,
-      delivery: orderData.dropoff,
+      pickup: orderData.pickupAddress,
+      delivery: orderData.dropoffAddress,
 
       weight:
         orderData.weight ||
