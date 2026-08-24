@@ -1994,212 +1994,302 @@ router.post('/decline-order', async (req, res) => {
     const orderRef =
       db.collection('orders').doc(orderId);
 
-    const orderSnap =
-      await orderRef.get();
+    const courierRef =
+      db.collection('couriers_live').doc(courierId);
 
-    if (!orderSnap.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
 
-    const order =
-      orderSnap.data();
+          // =========================
+          // READ ORDER
+          // =========================
 
-    // =========================
-    // PREVENT DOUBLE DECLINE
-    // =========================
+          const orderSnap =
+            await transaction.get(orderRef);
 
-    if (order.status === 'declined') {
+          if (!orderSnap.exists) {
+            throw new Error('Order not found');
+          }
 
-      return res.json({
-        success: true,
-        alreadyDeclined: true
-      });
+          const order =
+            orderSnap.data();
 
-    }
+          // =========================
+          // VERIFY COURIER
+          // =========================
 
-    // =========================
-    // ONLY THE ASSIGNED COURIER
-    // CAN DECLINE
-    // =========================
+          if (
+            order.courierType === 'tunnelmouth' &&
+            order.courierId !== courierId
+          ) {
 
-    if (
-      order.courierType === 'tunnelmouth' &&
-      order.courierId !== courierId
-    ) {
+            throw new Error(
+              'You are not assigned to this order.'
+            );
 
-      return res.status(403).json({
-        success: false,
-        message: 'You are not assigned to this order.'
-      });
+          }
 
-    }
+          // =========================
+          // ONLY ASSIGNED ORDERS
+          // CAN BE DECLINED
+          // =========================
 
-    // =========================
-    // CALCULATE REFUND
-    // =========================
+          if (
+            order.status !== 'assigned' &&
+            order.status !== undefined &&
+            order.status !== null &&
+            order.status !== ''
+          ) {
 
-    const amountPaid =
-      Number(order.amountPaid || 0);
+            if (order.status === 'declined') {
 
-    const walletUsed =
-      Number(order.walletUsed || 0);
+              return {
+                alreadyDeclined: true
+              };
 
-    const refundAmount =
-      amountPaid + walletUsed;
+            }
 
-    // =========================
-    // MARK ORDER DECLINED
-    // =========================
+            throw new Error(
+              `This order cannot be declined because it is already ${order.status}.`
+            );
 
-    await orderRef.update({
+          }
 
-      status:
-        'declined',
+          // =========================
+          // READ COURIER
+          // =========================
 
-      paymentStatus:
-        'refunded',
+          const courierSnap =
+            await transaction.get(courierRef);
 
-      declinedAt:
-        admin.firestore.FieldValue.serverTimestamp()
+          // =========================
+          // CALCULATE AMOUNTS
+          // =========================
 
-    });
+          const amountPaid =
+            Number(order.amountPaid || 0);
 
-    // =========================
-    // REVERSE TUNNELMOUTH
-    // DRIVER EARNINGS ONLY
-    // =========================
+          const walletUsed =
+            Number(order.walletUsed || 0);
 
-    if (
-      order.courierType === 'tunnelmouth' &&
-      Number(order.driverEarning || 0) > 0
-    ) {
+          const refundAmount =
+            amountPaid + walletUsed;
 
-      const driverEarning =
-        Number(order.driverEarning);
+          const driverEarning =
+            Number(order.driverEarning || 0);
 
-      const courierRef =
-        db
-          .collection('couriers_live')
-          .doc(courierId);
+          // =========================
+          // MARK ORDER DECLINED
+          // =========================
 
-      const courierSnap =
-        await courierRef.get();
+          transaction.update(
+            orderRef,
+            {
 
-      if (courierSnap.exists) {
+              status:
+                'declined',
 
-        await courierRef.update({
+              paymentStatus:
+                'refunded',
 
-          walletBalance:
-            admin.firestore.FieldValue.increment(
-              -driverEarning
-            ),
+              declinedAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp(),
 
-          totalEarned:
-            admin.firestore.FieldValue.increment(
-              -driverEarning
-            ),
+              refundAmount,
 
-          totalDeliveries:
-            admin.firestore.FieldValue.increment(-1)
+              refundMethod:
+                'wallet'
 
-        });
+            }
+          );
 
-        const updatedCourier =
-          await courierRef.get();
+          // =========================
+          // REVERSE DRIVER EARNINGS
+          // =========================
 
-        if (
-          Number(
-            updatedCourier.data()?.totalDeliveries || 0
-          ) < 0
-        ) {
+          if (
+            order.courierType === 'tunnelmouth' &&
+            driverEarning > 0 &&
+            courierSnap.exists
+          ) {
 
-          await courierRef.update({
-            totalDeliveries: 0
-          });
+            const courier =
+              courierSnap.data();
+
+            const currentBalance =
+              Number(
+                courier.walletBalance || 0
+              );
+
+            const currentTotalEarned =
+              Number(
+                courier.totalEarned || 0
+              );
+
+            const currentDeliveries =
+              Number(
+                courier.totalDeliveries || 0
+              );
+
+            transaction.update(
+              courierRef,
+              {
+
+                walletBalance:
+                  Math.max(
+                    currentBalance -
+                    driverEarning,
+                    0
+                  ),
+
+                totalEarned:
+                  Math.max(
+                    currentTotalEarned -
+                    driverEarning,
+                    0
+                  ),
+
+                totalDeliveries:
+                  Math.max(
+                    currentDeliveries - 1,
+                    0
+                  )
+
+              }
+            );
+
+            // =========================
+            // DRIVER REVERSAL RECORD
+            // =========================
+
+            const driverTransactionRef =
+              db
+                .collection(
+                  'wallet_transactions'
+                )
+                .doc();
+
+            transaction.set(
+              driverTransactionRef,
+              {
+
+                userId:
+                  courierId,
+
+                type:
+                  'debit',
+
+                amount:
+                  driverEarning,
+
+                description:
+                  'Delivery declined - earnings reversed',
+
+                orderId,
+
+                createdAt:
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
+
+              }
+            );
+
+          }
+
+          // =========================
+          // REFUND CUSTOMER
+          // =========================
+
+          if (refundAmount > 0) {
+
+            const customerRef =
+              db
+                .collection('users')
+                .doc(order.userId);
+
+            transaction.update(
+              customerRef,
+              {
+
+                walletBalance:
+                  admin.firestore.FieldValue
+                    .increment(
+                      refundAmount
+                    ),
+
+                walletLastUpdated:
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
+
+              }
+            );
+
+            // =========================
+            // REFUND RECORD
+            // =========================
+
+            const refundTransactionRef =
+              db
+                .collection(
+                  'wallet_transactions'
+                )
+                .doc();
+
+            transaction.set(
+              refundTransactionRef,
+              {
+
+                userId:
+                  order.userId,
+
+                type:
+                  'refund',
+
+                amount:
+                  refundAmount,
+
+                description:
+                  'Driver declined your delivery. Amount refunded to wallet.',
+
+                orderId,
+
+                createdAt:
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
+
+              }
+            );
+
+          }
+
+          return {
+            alreadyDeclined: false,
+            refundAmount,
+            driverEarning
+          };
 
         }
-
-      }
-
-      // Record driver reversal
-
-      await db
-        .collection('wallet_transactions')
-        .add({
-
-          userId:
-            courierId,
-
-          type:
-            'debit',
-
-          amount:
-            driverEarning,
-
-          description:
-            'Delivery declined - earnings reversed',
-
-          orderId,
-
-          createdAt:
-            admin.firestore.FieldValue.serverTimestamp()
-
-        });
-
-    }
+      );
 
     // =========================
-    // REFUND CUSTOMER
+    // ALREADY DECLINED
     // =========================
 
-    if (refundAmount > 0) {
+    if (
+      result.alreadyDeclined
+    ) {
 
-      const userRef =
-        db
-          .collection('users')
-          .doc(order.userId);
+      return res.json({
 
-      await userRef.set({
+        success:
+          true,
 
-        walletBalance:
-          admin.firestore.FieldValue.increment(
-            refundAmount
-          ),
+        alreadyDeclined:
+          true
 
-        walletLastUpdated:
-          admin.firestore.FieldValue.serverTimestamp()
-
-      }, {
-        merge: true
       });
-
-      // Record refund
-
-      await db
-        .collection('wallet_transactions')
-        .add({
-
-          userId:
-            order.userId,
-
-          type:
-            'refund',
-
-          amount:
-            refundAmount,
-
-          description:
-            'Driver declined your delivery. Amount refunded to wallet.',
-
-          orderId,
-
-          createdAt:
-            admin.firestore.FieldValue.serverTimestamp()
-
-        });
 
     }
 
@@ -2212,10 +2302,14 @@ router.post('/decline-order', async (req, res) => {
       success:
         true,
 
-      refundAmount,
+      refundAmount:
+        result.refundAmount,
+
+      driverEarningReversed:
+        result.driverEarning,
 
       courierType:
-        order.courierType || 'tunnelmouth'
+        'tunnelmouth'
 
     });
 
@@ -2226,13 +2320,14 @@ router.post('/decline-order', async (req, res) => {
       err
     );
 
-    return res.status(500).json({
+    return res.status(400).json({
 
       success:
         false,
 
       message:
-        err.message
+        err.message ||
+        'Unable to decline order'
 
     });
 
