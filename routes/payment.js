@@ -265,7 +265,10 @@ router.post('/initialize-payment', async (req, res) => {
               orderData.courierType || '',
 
             amount:
-              numericAmount
+              numericAmount,
+
+            cancel_action:
+              'https://api.tunnelmouth.com/payment/paystack-cancel'
 
           }
 
@@ -2957,6 +2960,20 @@ router.get('/paystack-callback', (req, res) => {
   );
 
   res.status(200).send('OK');
+
+});
+
+// =========================
+// PAYSTACK CANCEL CALLBACK
+// =========================
+
+router.get('/paystack-cancel', (req, res) => {
+
+  console.log(
+    'Paystack payment cancelled.'
+  );
+
+  res.status(200).send('PAYMENT_CANCELLED');
 
 });
 
