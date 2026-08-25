@@ -250,6 +250,9 @@ router.post('/initialize-payment', async (req, res) => {
 
           reference,
 
+          callback_url:
+            'https://api.tunnelmouth.com/payment/paystack-callback',
+
           metadata: {
 
             userId:
@@ -2938,6 +2941,22 @@ router.post('/submit-review', async (req, res) => {
     });
 
   }
+
+});
+
+router.get('/paystack-callback', (req, res) => {
+
+  const reference =
+    req.query.reference ||
+    req.query.trxref ||
+    '';
+
+  console.log(
+    'Paystack callback:',
+    reference
+  );
+
+  res.status(200).send('OK');
 
 });
 
