@@ -110,6 +110,255 @@ router.get('/', (req, res) => {
 
 
 // =========================
+// INITIALIZE PAYMENT
+// PAYSTACK
+// =========================
+
+router.post('/initialize-payment', async (req, res) => {
+
+  try {
+
+    const {
+      orderData,
+      amount
+    } = req.body;
+
+
+    // =========================
+    // VALIDATION
+    // =========================
+
+    if (!orderData) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Missing orderData'
+      });
+
+    }
+
+
+    if (!orderData.userId) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Missing userId'
+      });
+
+    }
+
+
+    const numericAmount =
+      Number(amount);
+
+
+    if (
+      !numericAmount ||
+      numericAmount <= 0
+    ) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid payment amount'
+      });
+
+    }
+
+
+    if (
+      !process.env.PAYSTACK_SECRET_KEY
+    ) {
+
+      return res.status(500).json({
+        success: false,
+        error:
+          'Server misconfigured: missing PAYSTACK_SECRET_KEY'
+      });
+
+    }
+
+
+    // =========================
+    // GET CUSTOMER EMAIL
+    // =========================
+
+    const userSnap =
+      await db
+        .collection('users')
+        .doc(orderData.userId)
+        .get();
+
+
+    if (!userSnap.exists) {
+
+      return res.status(404).json({
+        success: false,
+        error: 'User account not found'
+      });
+
+    }
+
+
+    const user =
+      userSnap.data();
+
+
+    const email =
+      user?.email ||
+      orderData.customerEmail ||
+      '';
+
+
+    if (!email) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Customer email is required'
+      });
+
+    }
+
+
+    // =========================
+    // UNIQUE REFERENCE
+    // =========================
+
+    const reference =
+      `TM_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2, 8)}`;
+
+
+    // =========================
+    // PAYSTACK INITIALIZATION
+    // =========================
+
+    const paystackResponse =
+      await axios.post(
+        'https://api.paystack.co/transaction/initialize',
+        {
+
+          email,
+
+          amount:
+            Math.round(
+              numericAmount * 100
+            ).toString(),
+
+          currency:
+            'NGN',
+
+          reference,
+
+          metadata: {
+
+            userId:
+              orderData.userId,
+
+            courierId:
+              orderData.courierId || '',
+
+            courierType:
+              orderData.courierType || '',
+
+            amount:
+              numericAmount
+
+          }
+
+        },
+        {
+
+          headers: {
+
+            Authorization:
+              `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+
+            'Content-Type':
+              'application/json'
+
+          },
+
+          timeout: 15000
+
+        }
+      );
+
+
+    const paystackData =
+      paystackResponse?.data;
+
+
+    if (
+      !paystackData?.status ||
+      !paystackData?.data?.authorization_url
+    ) {
+
+      console.error(
+        'Paystack initialization failed:',
+        paystackData
+      );
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          paystackData?.message ||
+          'Paystack could not initialize payment'
+
+      });
+
+    }
+
+
+    // =========================
+    // SUCCESS
+    // =========================
+
+    return res.json({
+
+      success: true,
+
+      authorization_url:
+        paystackData.data.authorization_url,
+
+      access_code:
+        paystackData.data.access_code,
+
+      reference:
+        paystackData.data.reference ||
+        reference
+
+    });
+
+
+  } catch (err) {
+
+    console.error(
+      'Initialize payment error:',
+      err.response?.data ||
+      err.message ||
+      err
+    );
+
+
+    return res.status(500).json({
+
+      success: false,
+
+      error:
+        err.response?.data?.message ||
+        err.message ||
+        'Unable to initialize payment'
+
+    });
+
+  }
+
+});
+
+// =========================
 // VERIFY PAYMENT (PAYSTACK)
 // =========================
 router.post('/verify-payment', async (req, res) => {
