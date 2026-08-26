@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 
 const {
   admin,
@@ -33,6 +34,76 @@ const formatNigerianPhone = (phone) => {
   }
 
   return cleaned;
+};
+
+
+const verifyTerminalWebhook = (
+  signature,
+  rawBody
+) => {
+
+  try {
+
+    if (
+      !signature ||
+      !process.env.TERMINAL_SECRET_KEY
+    ) {
+
+      return false;
+
+    }
+
+
+    const expectedSignature =
+      crypto
+        .createHmac(
+          'sha512',
+          process.env.TERMINAL_SECRET_KEY
+        )
+        .update(rawBody)
+        
+        .digest('hex');
+
+
+    const receivedBuffer =
+      Buffer.from(
+        String(signature),
+        'utf8'
+      );
+
+    const expectedBuffer =
+      Buffer.from(
+        expectedSignature,
+        'utf8'
+      );
+
+
+    if (
+      receivedBuffer.length !==
+      expectedBuffer.length
+    ) {
+
+      return false;
+
+    }
+
+
+    return crypto.timingSafeEqual(
+      receivedBuffer,
+      expectedBuffer
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Terminal webhook signature verification error:',
+      error
+    );
+
+    return false;
+
+  }
+
 };
 
 
@@ -1411,30 +1482,35 @@ router.post('/webhook', async (req, res) => {
 
   try {
 
+
     // =========================
     // VERIFY TERMINAL SIGNATURE
     // =========================
 
-   // terminal webhook
+    const signature =
+      req.headers['x-terminal-signature'];
 
-   console.log(
-     '========== TERMINAL WEBHOOK =========='
-   );
 
-   console.log(
-    'Terminal webhook headers:',
-    req.headers
-   );
+    const isValid =
+      verifyTerminalWebhook(
+        signature,
+        req.rawBody
+      );
 
-   console.log(
-    'Terminal webhook body:',
-    JSON.stringify(
-      req.body,
-      null,
-      2
-    )
-   );
 
+    if (!isValid) {
+
+      console.error(
+        'Invalid Terminal webhook signature.'
+      );
+
+      return res.status(401).json({
+        success: false,
+        message:
+          'Invalid webhook signature.'
+      });
+
+    }
 
     // =========================
     // TERMINAL EVENT
@@ -1445,10 +1521,7 @@ router.post('/webhook', async (req, res) => {
       data
     } = req.body;
 
-    console.log(
-      'Terminal webhook received:',
-      event
-    );
+    
 
 
     // =========================
