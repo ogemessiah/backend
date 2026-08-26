@@ -233,6 +233,7 @@ router.post('/quote', async (req, res) => {
 
         photoURL:
           courier.photoURL ||
+          courier.profileImage ||
           null,
 
         averageRating:
@@ -254,7 +255,7 @@ router.post('/quote', async (req, res) => {
           price,
 
         deliveryTime:
-          'Delivery time unavailable',
+          'Within 1 business day',
 
         courierType:
           'tunnelmouth'
