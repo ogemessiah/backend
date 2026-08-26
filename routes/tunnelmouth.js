@@ -108,6 +108,13 @@ router.post('/quote', async (req, res) => {
       const courier =
         doc.data();
 
+        console.log(
+          'COURIER:',
+          doc.id,
+          'PHOTO:',
+          courier.photoURL
+        );
+
 
       let price = 0;
 
