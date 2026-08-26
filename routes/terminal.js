@@ -537,10 +537,7 @@ router.post('/quote', async (req, res) => {
     };
 
 
-    console.log(
-      'T-Ship quote request:',
-      quoteRequest
-    );
+   
 
 
     // =========================
@@ -1027,14 +1024,7 @@ router.post('/arrange', async (req, res) => {
     };
 
 
-    console.log(
-      'Creating Terminal shipment:',
-      JSON.stringify(
-        shipmentRequest,
-        null,
-        2
-      )
-    );
+    
 
 
     const shipmentResponse =
