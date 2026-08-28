@@ -58,7 +58,61 @@ app.post('/distance', async (req, res) => {
 }
 );
 
+// =========================
+// TEST PUSH NOTIFICATION
+// =========================
+app.post('/test-push', async (req, res) => {
 
+  try {
+
+    const { expoPushToken } = req.body;
+
+    if (!expoPushToken) {
+      return res.status(400).json({
+        error: 'expoPushToken is required'
+      });
+    }
+
+    const response = await fetch(
+      'https://exp.host/--/api/v2/push/send',
+      {
+        method: 'POST',
+
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+
+        body: JSON.stringify({
+          to: expoPushToken,
+          sound: 'default',
+          title: 'TunnelMouth 🚚',
+          body: 'Push notifications are working!',
+          data: {
+            test: true
+          }
+        }),
+      }
+    );
+
+    const result = await response.json();
+
+    console.log('EXPO PUSH RESPONSE:', result);
+
+    res.json(result);
+
+  } catch (error) {
+
+    console.error(
+      'PUSH NOTIFICATION ERROR:',
+      error
+    );
+
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
 
 // =========================
 // START SERVER
