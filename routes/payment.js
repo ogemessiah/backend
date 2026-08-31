@@ -5,6 +5,10 @@ const { admin, db } = require('../firebaseAdmin');
 const { firestore } = require('firebase-admin');
 
 const {
+  sendPushNotification
+} = require('../utils/pushNotifications');
+
+const {
   mapTerminalStatus
 } = require('../utils/terminalStatus');
 
@@ -1322,6 +1326,115 @@ router.post('/verify-payment', async (req, res) => {
     }
 
     // =========================
+    // PUSH NOTIFICATIONS
+    // =========================
+
+    try {
+
+      // =========================
+      // CUSTOMER
+      // =========================
+
+      const customerSnap =
+        await db
+          .collection('users')
+          .doc(orderData.userId)
+          .get();
+
+      const customer =
+        customerSnap.exists
+          ? customerSnap.data()
+          : null;
+
+      // =========================
+      // COURIER
+      // =========================
+
+      let courier = null;
+
+      if (
+        isTunnelMouth &&
+        orderData.courierId
+      ) {
+
+        const courierSnap =
+          await db
+            .collection('couriers_live')
+            .doc(orderData.courierId)
+            .get();
+
+        courier =
+          courierSnap.exists
+            ? courierSnap.data()
+            : null;
+      }
+
+      // =========================
+      // CUSTOMER:
+      // ORDER CONFIRMED
+      // =========================
+
+      await sendPushNotification({
+
+        expoPushToken:
+          customer?.expoPushToken,
+
+        title:
+          'Order Confirmed',
+
+        body:
+          'Courier assigned to your delivery.',
+
+        data: {
+          type: 'order_confirmed',
+          orderId
+        }
+
+      });
+
+      // =========================
+      // COURIER:
+      // NEW DELIVERY REQUEST
+      // =========================
+
+      if (
+        isTunnelMouth &&
+        courier?.expoPushToken
+      ) {
+
+        await sendPushNotification({
+
+          expoPushToken:
+            courier.expoPushToken,
+
+          title:
+            'New Delivery Request',
+
+          body:
+            'You have a new delivery request.',
+
+          data: {
+            type: 'new_delivery_request',
+            orderId
+          }
+
+        });
+
+      }
+
+    } catch (notificationError) {
+
+      // Notification failure should NEVER
+      // cause the payment/order to fail.
+
+      console.error(
+        'Order notification error:',
+        notificationError
+      );
+
+    }
+
+    // =========================
     // SUCCESS
     // =========================
 
@@ -2189,6 +2302,115 @@ router.post('/wallet-payment', async (req, res) => {
 
     }
 
+    // =========================
+    // PUSH NOTIFICATIONS
+    // =========================
+
+    try {
+
+      // =========================
+      // CUSTOMER
+      // =========================
+
+      const customerSnap =
+        await db
+          .collection('users')
+          .doc(orderData.userId)
+          .get();
+
+      const customer =
+        customerSnap.exists
+          ? customerSnap.data()
+          : null;
+
+      // =========================
+      // COURIER
+      // =========================
+
+      let courier = null;
+
+      if (
+        isTunnelMouth &&
+        orderData.courierId
+      ) {
+
+        const courierSnap =
+          await db
+            .collection('couriers_live')
+            .doc(orderData.courierId)
+            .get();
+
+        courier =
+          courierSnap.exists
+            ? courierSnap.data()
+            : null;
+      }
+
+      // =========================
+      // CUSTOMER:
+      // ORDER CONFIRMED
+      // =========================
+
+      await sendPushNotification({
+
+        expoPushToken:
+          customer?.expoPushToken,
+
+        title:
+          'Order Confirmed',
+
+        body:
+          'Courier assigned to your delivery.',
+
+        data: {
+          type: 'order_confirmed',
+          orderId
+        }
+
+      });
+
+      // =========================
+      // COURIER:
+      // NEW DELIVERY REQUEST
+      // =========================
+
+      if (
+        isTunnelMouth &&
+        courier?.expoPushToken
+      ) {
+
+        await sendPushNotification({
+
+          expoPushToken:
+            courier.expoPushToken,
+
+          title:
+            'New Delivery Request',
+
+          body:
+            'You have a new delivery request.',
+
+          data: {
+            type: 'new_delivery_request',
+            orderId
+          }
+
+        });
+
+      }
+
+    } catch (notificationError) {
+
+      // Notification failure should NEVER
+      // cause the payment/order to fail.
+
+      console.error(
+        'Order notification error:',
+        notificationError
+      );
+
+    }
+
 
     // =========================
     // SUCCESS
@@ -2522,11 +2744,58 @@ router.post('/decline-order', async (req, res) => {
           return {
             alreadyDeclined: false,
             refundAmount,
-            driverEarning
+            driverEarning,
+            userId: order.userId
           };
 
         }
       );
+
+    // =========================
+    // CUSTOMER NOTIFICATION
+    // =========================
+
+    try {
+
+      const customerSnap =
+        await db
+          .collection('users')
+          .doc(result.userId || '')
+          .get();
+
+      if (customerSnap.exists) {
+
+        const customer =
+          customerSnap.data();
+
+        await sendPushNotification({
+
+          expoPushToken:
+            customer?.expoPushToken,
+
+          title:
+            'Courier declined',
+
+          body:
+            'Your payment has been refunded to your wallet.',
+
+          data: {
+            type: 'courier_declined',
+            orderId
+          }
+
+        });
+
+      }
+
+    } catch (notificationError) {
+
+      console.error(
+        'Decline notification error:',
+        notificationError
+      );
+
+    }
 
     // =========================
     // ALREADY DECLINED
@@ -2591,6 +2860,669 @@ router.post('/decline-order', async (req, res) => {
 });
 
 
+// =========================
+// DRIVER PICKS UP ORDER
+// =========================
+router.post('/pickup-order', async (req, res) => {
+
+  try {
+
+    const {
+      orderId,
+      courierId
+    } = req.body;
+
+
+    // =========================
+    // VALIDATION
+    // =========================
+
+    if (!orderId || !courierId) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'Missing orderId or courierId'
+      });
+
+    }
+
+
+    // =========================
+    // ORDER REFERENCE
+    // =========================
+
+    const orderRef =
+      db
+        .collection('orders')
+        .doc(orderId);
+
+
+    // =========================
+    // UPDATE ORDER
+    // =========================
+
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
+
+          // =========================
+          // READ ORDER
+          // =========================
+
+          const orderSnap =
+            await transaction.get(orderRef);
+
+
+          if (!orderSnap.exists) {
+
+            throw new Error(
+              'Order not found'
+            );
+
+          }
+
+
+          const order =
+            orderSnap.data();
+
+
+          // =========================
+          // VERIFY COURIER
+          // =========================
+
+          if (
+            order.courierId !== courierId
+          ) {
+
+            throw new Error(
+              'You are not assigned to this delivery.'
+            );
+
+          }
+
+
+          // =========================
+          // PREVENT DUPLICATE PICKUP
+          // =========================
+
+          if (
+            order.status === 'picked_up'
+          ) {
+
+            return {
+
+              alreadyPickedUp:
+                true,
+
+              userId:
+                order.userId
+
+            };
+
+          }
+
+
+          // =========================
+          // ONLY ASSIGNED ORDERS
+          // CAN BE PICKED UP
+          // =========================
+
+          if (
+            order.status !== 'assigned'
+          ) {
+
+            throw new Error(
+              `This order cannot be picked up because it is currently ${order.status || 'unknown'}.`
+            );
+
+          }
+
+
+          // =========================
+          // MARK PICKED UP
+          // =========================
+
+          transaction.update(
+            orderRef,
+            {
+
+              status:
+                'picked_up',
+
+              pickedUpAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp()
+
+            }
+          );
+
+
+          return {
+
+            alreadyPickedUp:
+              false,
+
+            userId:
+              order.userId
+
+          };
+
+        }
+      );
+
+
+    // =========================
+    // ALREADY PICKED UP
+    // =========================
+
+    if (
+      result.alreadyPickedUp
+    ) {
+
+      return res.json({
+
+        success:
+          true,
+
+        alreadyPickedUp:
+          true,
+
+        orderId,
+
+        status:
+          'picked_up'
+
+      });
+
+    }
+
+
+    // =========================
+    // CUSTOMER NOTIFICATION
+    // =========================
+
+    try {
+
+      const customerSnap =
+        await db
+          .collection('users')
+          .doc(result.userId)
+          .get();
+
+
+      if (
+        customerSnap.exists
+      ) {
+
+        const customer =
+          customerSnap.data();
+
+
+        if (
+          customer?.expoPushToken
+        ) {
+
+          await sendPushNotification({
+
+            expoPushToken:
+              customer.expoPushToken,
+
+            title:
+              'Order Picked Up',
+
+            body:
+              'Your package has been picked up and is on its way.',
+
+            data: {
+
+              type:
+                'order_picked_up',
+
+              orderId
+
+            }
+
+          });
+
+        }
+
+      }
+
+    } catch (notificationError) {
+
+      // Notification failure must NOT
+      // cause pickup to fail.
+
+      console.error(
+        'Pickup notification error:',
+        notificationError
+      );
+
+    }
+
+
+    // =========================
+    // SUCCESS
+    // =========================
+
+    return res.json({
+
+      success:
+        true,
+
+      orderId,
+
+      status:
+        'picked_up'
+
+    });
+
+
+  } catch (err) {
+
+    console.error(
+      'Pickup order error:',
+      err
+    );
+
+
+    return res.status(400).json({
+
+      success:
+        false,
+
+      message:
+        err.message ||
+        'Unable to mark order as picked up'
+
+    });
+
+  }
+
+});
+
+
+// =========================
+// ORDER DELIVERED
+// =========================
+router.post('/order-delivered', async (req, res) => {
+
+  try {
+
+    const {
+      orderId,
+      courierId
+    } = req.body;
+
+
+    // =========================
+    // VALIDATION
+    // =========================
+
+    if (!orderId || !courierId) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Missing orderId or courierId'
+
+      });
+
+    }
+
+
+    // =========================
+    // ORDER REFERENCE
+    // =========================
+
+    const orderRef =
+      db
+        .collection('orders')
+        .doc(orderId);
+
+
+    // =========================
+    // COMPLETE DELIVERY
+    // =========================
+
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
+
+          // =========================
+          // READ ORDER
+          // =========================
+
+          const orderSnap =
+            await transaction.get(orderRef);
+
+
+          if (!orderSnap.exists) {
+
+            throw new Error(
+              'Order not found'
+            );
+
+          }
+
+
+          const order =
+            orderSnap.data();
+
+
+          // =========================
+          // VERIFY COURIER
+          // =========================
+
+          if (
+            order.courierId !== courierId
+          ) {
+
+            throw new Error(
+              'You are not assigned to this delivery.'
+            );
+
+          }
+
+
+          // =========================
+          // PREVENT DUPLICATE DELIVERY
+          // =========================
+
+          if (
+            order.status === 'delivered'
+          ) {
+
+            return {
+
+              alreadyDelivered:
+                true,
+
+              userId:
+                order.userId
+
+            };
+
+          }
+
+
+          // =========================
+          // ONLY PICKED-UP ORDERS
+          // CAN BE DELIVERED
+          // =========================
+
+          if (
+            order.status !== 'picked_up'
+          ) {
+
+            throw new Error(
+              `This delivery cannot be completed because it is currently ${order.status || 'unknown'}.`
+            );
+
+          }
+
+
+          // =========================
+          // MARK DELIVERED
+          // =========================
+
+          transaction.update(
+            orderRef,
+            {
+
+              status:
+                'delivered',
+
+              deliveredAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp(),
+
+              deliveryNotificationSent:
+                false
+
+            }
+          );
+
+
+          return {
+
+            alreadyDelivered:
+              false,
+
+            userId:
+              order.userId
+
+          };
+
+        }
+      );
+
+
+    // =========================
+    // ALREADY DELIVERED
+    // =========================
+
+    if (
+      result.alreadyDelivered
+    ) {
+
+      return res.json({
+
+        success:
+          true,
+
+        alreadyDelivered:
+          true,
+
+        notificationSent:
+          false,
+
+        orderId
+
+      });
+
+    }
+
+
+    // =========================
+    // GET CUSTOMER
+    // =========================
+
+    const customerSnap =
+      await db
+        .collection('users')
+        .doc(result.userId)
+        .get();
+
+
+    if (
+      !customerSnap.exists
+    ) {
+
+      console.error(
+        'Customer not found for delivered order:',
+        result.userId
+      );
+
+
+      return res.json({
+
+        success:
+          true,
+
+        orderId,
+
+        notificationSent:
+          false,
+
+        message:
+          'Delivery completed, but customer account was not found.'
+
+      });
+
+    }
+
+
+    const customer =
+      customerSnap.data();
+
+
+    // =========================
+    // CUSTOMER NOTIFICATION
+    // =========================
+
+    if (
+      customer?.expoPushToken
+    ) {
+
+      try {
+
+        await sendPushNotification({
+
+          expoPushToken:
+            customer.expoPushToken,
+
+          title:
+            'Order Delivered',
+
+          body:
+            'Your delivery has been successfully completed.',
+
+          data: {
+
+            type:
+              'order_delivered',
+
+            orderId
+
+          }
+
+        });
+
+
+        // =========================
+        // MARK NOTIFICATION SENT
+        // =========================
+
+        await orderRef.update({
+
+          deliveryNotificationSent:
+            true,
+
+          deliveryNotificationSentAt:
+            admin.firestore.FieldValue
+              .serverTimestamp()
+
+        });
+
+
+        console.log(
+          `Order delivered notification sent: ${orderId}`
+        );
+
+
+        return res.json({
+
+          success:
+            true,
+
+          orderId,
+
+          status:
+            'delivered',
+
+          notificationSent:
+            true
+
+        });
+
+      } catch (notificationError) {
+
+        // Delivery remains completed even
+        // if push notification fails.
+
+        console.error(
+          'Order delivered notification error:',
+          notificationError
+        );
+
+
+        return res.json({
+
+          success:
+            true,
+
+          orderId,
+
+          status:
+            'delivered',
+
+          notificationSent:
+            false,
+
+          message:
+            'Delivery completed, but notification could not be sent.'
+
+        });
+
+      }
+
+    }
+
+
+    // =========================
+    // CUSTOMER HAS NO PUSH TOKEN
+    // =========================
+
+    console.log(
+      `Customer has no expoPushToken: ${result.userId}`
+    );
+
+
+    return res.json({
+
+      success:
+        true,
+
+      orderId,
+
+      status:
+        'delivered',
+
+      notificationSent:
+        false,
+
+      message:
+        'Delivery completed, but customer has no push token.'
+
+    });
+
+
+  } catch (err) {
+
+    console.error(
+      'Order delivered error:',
+      err
+    );
+
+
+    return res.status(400).json({
+
+      success:
+        false,
+
+      message:
+        err.message ||
+        'Unable to complete delivery.'
+
+    });
+
+  }
+
+});
 
 
 // =========================
@@ -2976,7 +3908,5 @@ router.get('/paystack-cancel', (req, res) => {
   res.status(200).send('PAYMENT_CANCELLED');
 
 });
-
-
 
 module.exports = router;
