@@ -67,6 +67,15 @@ const arrangeTerminalShipment = async ({
       rateId:
         orderData.rateId,
 
+      parcelId:
+        orderData.parcelId || '',
+
+      pickupAddressId:
+        orderData.pickupAddressId || '',
+
+      deliveryAddressId:
+        orderData.deliveryAddressId || '',
+
       orderId,
 
       customer: {
@@ -809,6 +818,11 @@ router.post('/verify-payment', async (req, res) => {
                   ? orderData.rateId || null
                   : null,
 
+              terminalParcelId:
+                isTerminal
+                  ? orderData.parcelId || null
+                  : null,
+
               terminalPickupDate:
                 null,
 
@@ -987,6 +1001,12 @@ router.post('/verify-payment', async (req, res) => {
 
           throw new Error(
             'Missing Terminal rate ID'
+          );
+        }
+
+        if (!orderData.parcelId) {
+          throw new Error(
+            'Missing Terminal parcel ID'
           );
         }
 
@@ -1848,6 +1868,11 @@ router.post('/wallet-payment', async (req, res) => {
                   ? orderData.rateId || null
                   : null,
 
+              terminalParcelId:
+                isTerminal
+                  ? orderData.parcelId || null
+                  : null,
+
               terminalPickupDate:
                 null,
 
@@ -1978,6 +2003,12 @@ router.post('/wallet-payment', async (req, res) => {
             'Missing Terminal rate ID'
           );
 
+        }
+
+        if (!orderData.parcelId) {
+          throw new Error(
+            'Missing Terminal parcel ID'
+          );
         }
 
 

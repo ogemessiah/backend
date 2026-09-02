@@ -366,40 +366,6 @@ router.post('/quote', async (req, res) => {
     }
 
 
-    const parcelWeight =
-      Number(weight);
-
-
-    if (
-      !Number.isFinite(parcelWeight) ||
-      parcelWeight <= 0
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        message:
-          'A valid parcel weight is required.'
-
-      });
-
-    }
-
-
-    // =========================
-    // DEFAULT VALUES
-    // =========================
-
-    const name =
-      itemName ||
-      'Package';
-
-    const value =
-      Number(itemValue) > 0
-        ? Number(itemValue)
-        : 10000;
-
 
     // =========================
     // T-SHIP REQUEST
@@ -679,9 +645,16 @@ router.post('/quote', async (req, res) => {
               rate.id ||
               null,
             
-            shipmentId:
-              rate.shipment ||
-              rate.shipment_id ||
+            parcelId:
+              rate.parcel ||
+              null,
+
+            pickupAddressId:
+              rate.pickup_address ||
+              null,
+
+            deliveryAddressId:
+              rate.delivery_address ||
               null,
 
             basePrice:
@@ -825,6 +798,9 @@ router.post('/arrange', async (req, res) => {
       itemName,
       itemValue,
       rateId,
+      parcelId,
+      pickupAddressId,
+      deliveryAddressId,
       orderId,
       customer
     } = req.body;
@@ -853,6 +829,15 @@ router.post('/arrange', async (req, res) => {
           'Terminal rate ID is required.'
       });
 
+    }
+
+    if (!parcelId) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          'Terminal parcel ID is required'
+      });
     }
 
 
@@ -889,96 +874,18 @@ router.post('/arrange', async (req, res) => {
     // CREATE QUICK SHIPMENT
     // =========================
 
+    // =========================
+    // CREATE SHIPMENT FROM
+    // EXISTING PERSISTED PARCEL
+    // =========================
+
     const shipmentRequest = {
 
-      pickup_address: {
+      parcel:
+        parcelId,
 
-        line1:
-          pickup.line1 ||
-          pickup.address ||
-          pickup.description ||
-          '',
-
-        city:
-          pickup.city,
-
-        state:
-          pickup.state,
-
-        country:
-          pickup.country || 'NG',
-
-        zip:
-          pickup.zip ||
-          '',
-
-        first_name:
-          pickup.firstName ||
-          customer?.firstName ||
-          'TunnelMouth',
-
-        last_name:
-          pickup.lastName ||
-          customer?.lastName ||
-          'Customer',
-
-        phone:
-          formatNigerianPhone(
-            pickup.phone ||
-            customer?.phone ||
-            ''
-          ),
-          
-
-        email:
-          pickup.email ||
-          customer?.email ||
-          ''
-
-      },
-
-
-      delivery_address: {
-
-        line1:
-          delivery.line1 ||
-          delivery.address ||
-          delivery.description ||
-          '',
-
-        city:
-          delivery.city,
-
-        state:
-          delivery.state,
-
-        country:
-          delivery.country || 'NG',
-
-        zip:
-          delivery.zip ||
-          '',
-
-        first_name:
-          delivery.firstName ||
-          'TunnelMouth',
-
-        last_name:
-          delivery.lastName ||
-          'Customer',
-
-        phone:
-          formatNigerianPhone(
-            delivery.phone ||
-            ''
-          ),
-
-        email:
-          delivery.email ||
-          ''
-
-      },
-
+      shipment_purpose:
+        'personal',
 
       metadata: {
 
@@ -986,61 +893,34 @@ router.post('/arrange', async (req, res) => {
           orderId ||
           null
 
-      },
-
-
-      shipment_purpose:
-        'personal',
-
-
-      parcel: {
-
-        description:
-          name,
-
-        items: [
-
-          {
-
-            description:
-              name,
-
-            name:
-              name,
-
-            currency:
-              'NGN',
-
-            value:
-              value,
-
-            weight:
-              parcelWeight,
-
-            quantity:
-              1
-
-          }
-
-        ],
-
-        weight:
-          parcelWeight,
-
-        weight_unit:
-          'kg'
-
       }
 
     };
 
+    if (pickupAddressId) {
 
-    
+      shipmentRequest.address_from =
+        pickupAddressId;
+
+    }
+
+    if (deliveryAddressId) {
+
+      shipmentRequest.address_to =
+        deliveryAddressId;
+
+    }
+
+
+    console.log(
+      'Creating Terminal shipment from persisted parcel:',
+      shipmentRequest
+    );
 
 
     const shipmentResponse =
       await fetch(
-        'https://api.terminal.africa/v1/shipments/quick',
+        'https://api.terminal.africa/v1/shipments',
         {
 
           method:
@@ -1101,7 +981,8 @@ router.post('/arrange', async (req, res) => {
 
 
     const shipment =
-      shipmentData.data;
+      shipmentData.data ||
+      {};
 
 
     const shipmentId =
@@ -1292,6 +1173,8 @@ router.post('/arrange', async (req, res) => {
       shipmentId,
 
       rateId,
+
+      parcelId,
 
       status:
         arrangedShipment.status ||
