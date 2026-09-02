@@ -678,6 +678,11 @@ router.post('/quote', async (req, res) => {
               rate.rate_id ||
               rate.id ||
               null,
+            
+            shipmentId:
+              rate.shipment ||
+              rate.shipment_id ||
+              null,
 
             basePrice:
               Number(
