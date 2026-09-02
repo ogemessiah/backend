@@ -307,6 +307,10 @@ router.post('/quote', async (req, res) => {
       itemValue
     } = req.body;
 
+    const name = itemName || 'Package';
+    const value = Number(itemValue) || 10000;
+    const parcelWeight = Number(weight) || 1;
+
 
     // =========================
     // VALIDATE REQUEST
