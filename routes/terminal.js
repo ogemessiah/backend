@@ -439,8 +439,10 @@ router.post('/quote', async (req, res) => {
           '',
 
         phone:
-          pickup.phone ||
-          '',
+          formatNigerianPhone(
+            pickup.phone ||
+            ''
+          ),
 
         email:
           pickup.email ||
@@ -480,8 +482,10 @@ router.post('/quote', async (req, res) => {
           '',
 
         phone:
-          delivery.phone ||
-          '',
+          formatNigerianPhone(
+            delivery.phone ||
+            ''
+          ),
 
         email:
           delivery.email ||
@@ -959,8 +963,10 @@ router.post('/arrange', async (req, res) => {
           'Customer',
 
         phone:
-          delivery.phone ||
-          '',
+          formatNigerianPhone(
+            delivery.phone ||
+            ''
+          ),
 
         email:
           delivery.email ||
