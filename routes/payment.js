@@ -2232,7 +2232,7 @@ router.post('/wallet-payment', async (req, res) => {
                   refundAmount,
 
                 description:
-                  'Terminal shipment failed. Wallet payment refunded.',
+                  'Delivery failed. Wallet payment refunded.',
 
                 orderId,
 
@@ -2253,7 +2253,7 @@ router.post('/wallet-payment', async (req, res) => {
             false,
 
           error:
-            'Terminal shipment could not be arranged. Your wallet payment has been refunded.',
+            'Delivery could not be arranged. Your wallet payment has been refunded.',
 
           orderId
 
