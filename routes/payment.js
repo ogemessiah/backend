@@ -2483,6 +2483,821 @@ router.post('/wallet-payment', async (req, res) => {
 });
 
 
+// =====================================================
+// 💳 CUSTOMER WALLET TOP-UP
+// =====================================================
+
+// -----------------------------------------------------
+// INITIALIZE WALLET TOP-UP
+// -----------------------------------------------------
+
+router.post('/initialize-wallet-topup', async (req, res) => {
+
+  try {
+
+    const {
+      userId,
+      amount
+    } = req.body;
+
+    if (!userId) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+
+    }
+
+    const TOP_UP_FEE = 200;
+
+    const topUpAmount =
+      Number(amount);
+
+    const totalAmount =
+      topUpAmount + TOP_UP_FEE;
+
+    if (
+      !Number.isFinite(topUpAmount) ||
+      topUpAmount <= 0
+    ) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid top-up amount'
+      });
+
+    }
+
+    // Minimum wallet top-up
+    if (topUpAmount < 100) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Minimum wallet top-up is ₦100'
+      });
+
+    }
+
+    // Maximum wallet top-up
+    if (topUpAmount > 1000000) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Maximum wallet top-up is ₦1,000,000'
+      });
+
+    }
+
+    // -------------------------------------------------
+    // CHECK CUSTOMER EXISTS
+    // -------------------------------------------------
+
+    const userRef =
+      db
+        .collection('users')
+        .doc(userId);
+
+    const userSnap =
+      await userRef.get();
+
+    if (!userSnap.exists) {
+
+      return res.status(404).json({
+        success: false,
+        error: 'Customer account not found'
+      });
+
+    }
+
+    const userData =
+      userSnap.data() || {};
+
+    const email =
+      userData.email;
+
+    if (!email) {
+
+      return res.status(400).json({
+        success: false,
+        error: 'Customer email is required for wallet top-up'
+      });
+
+    }
+
+    // -------------------------------------------------
+    // CREATE UNIQUE TOP-UP REFERENCE
+    // -------------------------------------------------
+
+    const reference =
+      `WALLET_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2, 8)}`;
+
+    const topUpRef =
+      db
+        .collection('wallet_topups')
+        .doc(reference);
+
+    // -------------------------------------------------
+    // CREATE PENDING TOP-UP RECORD
+    // -------------------------------------------------
+
+    await topUpRef.set({
+
+      reference,
+
+      userId,
+
+      amount: topUpAmount,
+
+      fee: TOP_UP_FEE,
+
+      totalAmount: totalAmount,
+
+      currency: 'NGN',
+
+      status: 'pending',
+
+      createdAt:
+        firestore.FieldValue.serverTimestamp()
+
+    });
+
+    // -------------------------------------------------
+    // INITIALIZE PAYSTACK
+    // -------------------------------------------------
+
+    const paystackResponse =
+      await axios.post(
+
+        'https://api.paystack.co/transaction/initialize',
+
+        {
+
+          email,
+
+          amount:
+            Math.round(
+              totalAmount * 100
+            ).toString(),
+
+          currency: 'NGN',
+
+          reference,
+
+          callback_url:
+            'https://api.tunnelmouth.com/payment/paystack-callback',
+
+          metadata: {
+
+            type: 'wallet_topup',
+
+            userId,
+
+            topUpReference:
+              reference,
+
+            amount:
+              topUpAmount,
+
+            fee: 
+              TOP_UP_FEE,
+
+            totalAmount:
+              totalAmount,
+
+            cancel_action:
+              'https://api.tunnelmouth.com/payment/paystack-cancel'
+
+          }
+
+        },
+
+        {
+
+          headers: {
+
+            Authorization:
+              `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+
+            'Content-Type':
+              'application/json'
+
+          },
+
+          timeout: 15000
+
+        }
+
+      );
+
+    const paystackData =
+      paystackResponse?.data;
+
+    if (
+      !paystackData ||
+      !paystackData.status ||
+      !paystackData.data
+    ) {
+
+      await topUpRef.update({
+
+        status:
+          'initialization_failed',
+
+        updatedAt:
+          firestore.FieldValue.serverTimestamp()
+
+      });
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          paystackData?.message ||
+          'Unable to initialize wallet top-up'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // SAVE PAYSTACK INITIALIZATION DETAILS
+    // -------------------------------------------------
+
+    await topUpRef.update({
+
+      accessCode:
+        paystackData.data.access_code || null,
+
+      authorizationUrl:
+        paystackData.data.authorization_url || null,
+
+      initializedAt:
+        firestore.FieldValue.serverTimestamp()
+
+    });
+
+    // -------------------------------------------------
+    // RETURN CHECKOUT DETAILS
+    // -------------------------------------------------
+
+    return res.json({
+
+      success: true,
+
+      authorization_url:
+        paystackData.data.authorization_url,
+
+      access_code:
+        paystackData.data.access_code,
+
+      reference:
+        paystackData.data.reference ||
+        reference
+
+    });
+
+  } catch (error) {
+
+    console.error(
+      'Wallet top-up initialization error:',
+      error?.response?.data ||
+      error?.message ||
+      error
+    );
+
+    return res.status(500).json({
+
+      success: false,
+
+      error:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to initialize wallet top-up'
+
+    });
+
+  }
+
+});
+
+
+// -----------------------------------------------------
+// VERIFY WALLET TOP-UP
+// -----------------------------------------------------
+
+router.post('/verify-wallet-topup', async (req, res) => {
+
+  try {
+
+    const {
+      reference,
+      userId
+    } = req.body;
+
+    if (!reference) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          'Payment reference is required'
+
+      });
+
+    }
+
+    if (!userId) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          'User ID is required'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // FIND PENDING TOP-UP
+    // -------------------------------------------------
+
+    const topUpRef =
+      db
+        .collection('wallet_topups')
+        .doc(reference);
+
+    const topUpSnap =
+      await topUpRef.get();
+
+    if (!topUpSnap.exists) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        error:
+          'Wallet top-up record not found'
+
+      });
+
+    }
+
+    const topUp =
+      topUpSnap.data() || {};
+
+    // -------------------------------------------------
+    // MAKE SURE THIS TOP-UP BELONGS TO CUSTOMER
+    // -------------------------------------------------
+
+    if (topUp.userId !== userId) {
+
+      return res.status(403).json({
+
+        success: false,
+
+        error:
+          'Wallet top-up does not belong to this customer'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // IDEMPOTENCY CHECK
+    // -------------------------------------------------
+
+    if (topUp.status === 'completed') {
+
+      const userSnap =
+        await db
+          .collection('users')
+          .doc(userId)
+          .get();
+
+      const userData =
+        userSnap.data() || {};
+
+      return res.json({
+
+        success: true,
+
+        alreadyProcessed: true,
+
+        amount:
+          Number(topUp.amount || 0),
+
+        walletBalance:
+          Number(
+            userData.walletBalance || 0
+          )
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // VERIFY TRANSACTION WITH PAYSTACK
+    // -------------------------------------------------
+
+    const verify =
+      await axios.get(
+
+        `https://api.paystack.co/transaction/verify/${reference}`,
+
+        {
+
+          headers: {
+
+            Authorization:
+              `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+
+          },
+
+          timeout: 15000
+
+        }
+
+      );
+
+    const payment =
+      verify?.data?.data;
+
+    // -------------------------------------------------
+    // PAYMENT MUST BE SUCCESSFUL
+    // -------------------------------------------------
+
+    if (
+      !payment ||
+      payment.status !== 'success'
+    ) {
+
+      await topUpRef.update({
+
+        status: 'failed',
+
+        updatedAt:
+          firestore.FieldValue.serverTimestamp()
+
+      });
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          'Payment not successful'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // VERIFY AMOUNT
+    // -------------------------------------------------
+
+    const paidAmount =
+      Number(payment.amount) / 100;
+
+    const expectedAmount =
+      Number(topUp.amount);
+
+    const expectedTotalAmount =
+      Number(topUp.totalAmount);
+
+    if (
+      Math.abs(
+        paidAmount -
+        expectedTotalAmount
+      ) > 0.01
+    ) {
+
+      await topUpRef.update({
+
+        status:
+          'amount_mismatch',
+
+        paystackAmount:
+          paidAmount,
+
+        updatedAt:
+          firestore.FieldValue.serverTimestamp()
+
+      });
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          'Payment amount mismatch'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // VERIFY PAYSTACK METADATA
+    // -------------------------------------------------
+
+    const metadata =
+      payment.metadata || {};
+
+    if (
+      metadata.type &&
+      metadata.type !== 'wallet_topup'
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        error:
+          'Invalid wallet top-up transaction'
+
+      });
+
+    }
+
+    if (
+      metadata.userId &&
+      metadata.userId !== userId
+    ) {
+
+      return res.status(403).json({
+
+        success: false,
+
+        error:
+          'Payment customer mismatch'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // FIRESTORE REFERENCES
+    // -------------------------------------------------
+
+    const userRef =
+      db
+        .collection('users')
+        .doc(userId);
+
+    // -------------------------------------------------
+    // ATOMIC WALLET CREDIT
+    // -------------------------------------------------
+
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
+
+          // IMPORTANT:
+          // ALL READS FIRST
+
+          const latestTopUpSnap =
+            await transaction.get(
+              topUpRef
+            );
+
+          const userSnap =
+            await transaction.get(
+              userRef
+            );
+
+          if (!latestTopUpSnap.exists) {
+
+            throw new Error(
+              'Wallet top-up record not found'
+            );
+
+          }
+
+          if (!userSnap.exists) {
+
+            throw new Error(
+              'Customer account not found'
+            );
+
+          }
+
+          const latestTopUp =
+            latestTopUpSnap.data() || {};
+
+          // ------------------------------------------------
+          // IDEMPOTENCY INSIDE TRANSACTION
+          // ------------------------------------------------
+
+          if (
+            latestTopUp.status ===
+            'completed'
+          ) {
+
+            const existingUser =
+              userSnap.data() || {};
+
+            return {
+
+              alreadyProcessed: true,
+
+              walletBalance:
+                Number(
+                  existingUser.walletBalance ||
+                  0
+                )
+
+            };
+
+          }
+
+          if (
+            latestTopUp.userId !==
+            userId
+          ) {
+
+            throw new Error(
+              'Wallet top-up customer mismatch'
+            );
+
+          }
+
+          if (
+            Number(latestTopUp.amount) !==
+            expectedAmount
+          ) {
+
+            throw new Error(
+              'Wallet top-up amount mismatch'
+            );
+
+          }
+
+          const currentBalance =
+            Number(
+              userSnap.data()?.walletBalance ||
+              0
+            );
+
+          const newBalance =
+            currentBalance +
+            expectedAmount;
+
+          // ------------------------------------------------
+          // CREDIT CUSTOMER WALLET
+          // ------------------------------------------------
+
+          transaction.update(
+
+            userRef,
+
+            {
+
+              walletBalance:
+                newBalance,
+
+              walletLastUpdated:
+                firestore.FieldValue.serverTimestamp()
+
+            }
+
+          );
+
+          // ------------------------------------------------
+          // CREATE WALLET TRANSACTION
+          // ------------------------------------------------
+
+          const walletTransactionRef =
+            db
+              .collection('wallet_transactions')
+              .doc();
+
+          transaction.set(
+
+            walletTransactionRef,
+
+            {
+
+              userId,
+
+              type: 'credit',
+
+              amount:
+                expectedAmount,
+
+              description:
+                'Wallet top up',
+
+              reference,
+
+              topUpId:
+                reference,
+
+              createdAt:
+                firestore.FieldValue.serverTimestamp()
+
+            }
+
+          );
+
+          // ------------------------------------------------
+          // MARK TOP-UP COMPLETED
+          // ------------------------------------------------
+
+          transaction.update(
+
+            topUpRef,
+
+            {
+
+              status:
+                'completed',
+
+              completedAt:
+                firestore.FieldValue.serverTimestamp(),
+
+              paystackTransactionId:
+                payment.id || null,
+
+              paystackReference:
+                payment.reference ||
+                reference,
+
+              channel:
+                payment.channel ||
+                null,
+
+              paidAmount:
+                paidAmount
+
+            }
+
+          );
+
+          return {
+
+            alreadyProcessed: false,
+
+            walletBalance:
+              newBalance
+
+          };
+
+        }
+      );
+
+    // -------------------------------------------------
+    // SUCCESS
+    // -------------------------------------------------
+
+    return res.json({
+
+      success: true,
+
+      alreadyProcessed:
+        result.alreadyProcessed,
+
+      amount:
+        expectedAmount,
+
+      walletBalance:
+        result.walletBalance
+
+    });
+
+  } catch (error) {
+
+    console.error(
+
+      'Wallet top-up verification error:',
+
+      error?.response?.data ||
+      error?.message ||
+      error
+
+    );
+
+    return res.status(500).json({
+
+      success: false,
+
+      error:
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unable to verify wallet top-up'
+
+    });
+
+  }
+
+});
+
+
 // =========================
 // DRIVER DECLINES ORDER
 // =========================
