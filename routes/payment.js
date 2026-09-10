@@ -36,6 +36,291 @@ const formatNigerianPhone = (phone) => {
 
 const router = express.Router();
 
+// =====================================================
+// REFERRAL REWARD
+// =====================================================
+
+const processReferralReward = async ({
+  orderId,
+  referredUserId
+}) => {
+
+  const REWARD_AMOUNT = 500;
+
+  if (!orderId || !referredUserId) {
+    return {
+      rewarded: false,
+      reason: 'Missing orderId or referredUserId'
+    };
+  }
+
+  const referredUserRef =
+    db
+      .collection('users')
+      .doc(referredUserId);
+
+  const referralRewardRef =
+    db
+      .collection('referral_rewards')
+      .doc(referredUserId);
+
+  const result =
+    await db.runTransaction(
+      async (transaction) => {
+
+        // =========================
+        // READ CUSTOMER
+        // =========================
+
+        const referredUserSnap =
+          await transaction.get(
+            referredUserRef
+          );
+
+        if (!referredUserSnap.exists) {
+          return {
+            rewarded: false,
+            reason: 'Referred user not found'
+          };
+        }
+
+        const referredUser =
+          referredUserSnap.data() || {};
+
+        // =========================
+        // CUSTOMER MUST HAVE REFERRER
+        // =========================
+
+        const referrerId =
+          referredUser.referredBy;
+
+        if (!referrerId) {
+          return {
+            rewarded: false,
+            reason: 'Customer was not referred'
+          };
+        }
+
+        // =========================
+        // ALREADY CLAIMED
+        // =========================
+
+        if (
+          referredUser.referralRewardClaimed === true
+        ) {
+          return {
+            rewarded: false,
+            reason: 'Referral reward already claimed'
+          };
+        }
+
+        // =========================
+        // READ REFERRER
+        // =========================
+
+        const referrerRef =
+          db
+            .collection('users')
+            .doc(referrerId);
+
+        const referrerSnap =
+          await transaction.get(
+            referrerRef
+          );
+
+        if (!referrerSnap.exists) {
+          return {
+            rewarded: false,
+            reason: 'Referrer not found'
+          };
+        }
+
+        // =========================
+        // CHECK EXISTING REWARD
+        // =========================
+
+        const existingRewardSnap =
+          await transaction.get(
+            referralRewardRef
+          );
+
+        if (existingRewardSnap.exists) {
+          return {
+            rewarded: false,
+            reason: 'Referral reward record already exists'
+          };
+        }
+
+        // =========================
+        // CREDIT REFERRER
+        // =========================
+
+        transaction.update(
+          referrerRef,
+          {
+
+            walletBalance:
+              admin.firestore.FieldValue
+                .increment(
+                  REWARD_AMOUNT
+                ),
+
+            walletLastUpdated:
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
+          }
+        );
+
+        // =========================
+        // CREDIT REFERRED CUSTOMER
+        // =========================
+
+        transaction.update(
+          referredUserRef,
+          {
+
+            walletBalance:
+              admin.firestore.FieldValue
+                .increment(
+                  REWARD_AMOUNT
+                ),
+
+            referralRewardClaimed:
+              true,
+
+            referralRewardOrderId:
+              orderId,
+
+            walletLastUpdated:
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
+          }
+        );
+
+        // =========================
+        // REFERRER WALLET TRANSACTION
+        // =========================
+
+        const referrerTransactionRef =
+          db
+            .collection('wallet_transactions')
+            .doc();
+
+        transaction.set(
+          referrerTransactionRef,
+          {
+
+            userId:
+              referrerId,
+
+            type:
+              'credit',
+
+            amount:
+              REWARD_AMOUNT,
+
+            description:
+              'Referral reward',
+
+            orderId,
+
+            referredUserId,
+
+            createdAt:
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
+          }
+        );
+
+        // =========================
+        // REFERRED CUSTOMER TRANSACTION
+        // =========================
+
+        const referredTransactionRef =
+          db
+            .collection('wallet_transactions')
+            .doc();
+
+        transaction.set(
+          referredTransactionRef,
+          {
+
+            userId:
+              referredUserId,
+
+            type:
+              'credit',
+
+            amount:
+              REWARD_AMOUNT,
+
+            description:
+              'Referral reward for your first order',
+
+            orderId,
+
+            referrerId,
+
+            createdAt:
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
+          }
+        );
+
+        // =========================
+        // CREATE REFERRAL REWARD
+        // =========================
+
+        transaction.set(
+          referralRewardRef,
+          {
+
+            referrerId,
+
+            referredUserId,
+
+            orderId,
+
+            referrerReward:
+              REWARD_AMOUNT,
+
+            referredUserReward:
+              REWARD_AMOUNT,
+
+            totalReward:
+              REWARD_AMOUNT * 2,
+
+            status:
+              'credited',
+
+            creditedAt:
+              admin.firestore.FieldValue
+                .serverTimestamp(),
+
+            createdAt:
+              admin.firestore.FieldValue
+                .serverTimestamp()
+
+          }
+        );
+
+        return {
+          rewarded: true,
+          referrerId,
+          referredUserId,
+          amount: REWARD_AMOUNT
+        };
+
+      }
+    );
+
+  return result;
+};
+
 // =========================
 // ARRANGE TERMINAL SHIPMENT
 // =========================
@@ -1275,6 +1560,24 @@ router.post('/verify-payment', async (req, res) => {
       }
     }
 
+    //referral reward
+
+    try {
+
+      await processReferralReward({
+        orderId,
+        referredUserId:
+          orderData.userId
+      });
+
+    } catch (referralError) {
+
+      console.error(
+        'Referral reward error:',
+        referralError
+      );
+    }
+
     // =========================
     // TUNNELMOUTH DRIVER WALLET
     // =========================
@@ -2261,6 +2564,25 @@ router.post('/wallet-payment', async (req, res) => {
 
       }
 
+    }
+
+    // referral reward
+
+    try {
+
+      await processReferralReward({
+        orderId,
+        referredUserId:
+          orderData.userId
+      });
+
+    } catch (referralError) {
+
+      console.error(
+        'Referral reward error:',
+        referralError
+      );
+      
     }
 
 
