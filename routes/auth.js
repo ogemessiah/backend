@@ -169,6 +169,137 @@ router.post('/send-password-reset-email', async (req, res) => {
   }
 });
 
+// admin password reset
+
+router.post('/send-admin-password-reset-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Find the Firebase Auth user
+    let userRecord;
+
+    try {
+      userRecord = await admin.auth().getUserByEmail(cleanEmail);
+    } catch (error) {
+      if (error.code === 'auth/user-not-found') {
+        return res.status(404).json({
+          success: false,
+          message: 'No account found with this email'
+        });
+      }
+
+      throw error;
+    }
+
+    // Check the admin collection using the Firebase UID
+    const adminDoc = await admin
+      .firestore()
+      .collection('admin')
+      .doc(userRecord.uid)
+      .get();
+
+    if (!adminDoc.exists) {
+      return res.status(403).json({
+        success: false,
+        message: 'This account is not authorized for the TunnelMouth Admin Portal'
+      });
+    }
+
+    const adminData = adminDoc.data();
+
+    // Only these roles can access the Admin Portal
+    const allowedRoles = [
+      'CEO',
+      'operations',
+      'finance'
+    ];
+
+    if (!allowedRoles.includes(adminData.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'This account is not authorized for the TunnelMouth Admin Portal'
+      });
+    }
+
+    // Generate Firebase password reset link
+    const resetLink =
+      await admin.auth().generatePasswordResetLink(cleanEmail);
+
+    // Send the same customized TunnelMouth password-reset email
+    await resend.emails.send({
+      from: 'TunnelMouth <noreply@tunnelmouth.com>',
+      to: cleanEmail,
+      subject: 'Reset your TunnelMouth password',
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:30px;">
+          <h2>Reset your TunnelMouth password</h2>
+
+          <p>
+            We received a request to reset the password for your TunnelMouth account.
+          </p>
+
+          <p>
+            Click the button below to create a new password.
+          </p>
+
+          <p style="margin:40px 0;">
+            <a
+              href="${resetLink}"
+              style="
+                background:#04B559;
+                color:#fff;
+                text-decoration:none;
+                padding:14px 28px;
+                border-radius:8px;
+                display:inline-block;
+                font-weight:bold;
+              "
+            >
+              Reset Password
+            </a>
+          </p>
+
+          <p>
+            If you didn't request a password reset, you can safely ignore this email.
+            Your password will remain unchanged.
+          </p>
+
+          <hr>
+
+          <small>
+            © TunnelMouth Technologies Limited
+          </small>
+        </div>
+      `
+    });
+
+    return res.json({
+      success: true
+    });
+
+  } catch (err) {
+
+    console.error(
+      'Admin password reset email error:',
+      err
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to send password reset email'
+    });
+  }
+});
+
 // =========================
 // SEND PHONE OTP - ROBASE
 // =========================
