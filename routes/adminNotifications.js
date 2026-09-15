@@ -82,4 +82,54 @@ router.post('/send', async (req, res) => {
   }
 });
 
+// ========================================
+// SEND DRIVER NOTIFICATION
+// ========================================
+router.post('/send-driver', async (req, res) => {
+
+  try {
+
+    const {
+      expoPushToken,
+      title,
+      body,
+      data = {}
+    } = req.body;
+
+    if (!expoPushToken || !title || !body) {
+      return res.status(400).json({
+        error:
+          'expoPushToken, title and body are required'
+      });
+    }
+
+
+    await sendPushNotification({
+      expoPushToken,
+      title,
+      body,
+      data
+    });
+
+
+    return res.json({
+      success: true
+    });
+
+  } catch (error) {
+
+    console.error(
+      'Driver notification error:',
+      error
+    );
+
+    return res.status(500).json({
+      error:
+        'Failed to send driver notification'
+    });
+
+  }
+
+});
+
 module.exports = router;
