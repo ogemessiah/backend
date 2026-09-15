@@ -9,6 +9,8 @@ const terminalRoutes = require('./routes/terminal');
 
 const tunnelmouthRoutes = require('./routes/tunnelmouth');
 
+const adminNotificationsRoutes = require('./routes/adminNotifications');
+
 const app = express();
 
 // =========================
@@ -38,6 +40,7 @@ app.use('/payment', paymentRoutes);
 app.use('/auth', authRoutes);
 app.use('/terminal', terminalRoutes);
 app.use('/tunnelmouth', tunnelmouthRoutes);
+app.use('/admin-notifications', adminNotificationsRoutes);
 
 // =========================
 // HEALTH CHECK
