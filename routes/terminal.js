@@ -618,7 +618,7 @@ router.post('/quote', async (req, res) => {
             basePrice * 0.05;
 
           const fixedFee =
-            500;
+            700;
 
           const tunnelMouthPrice =
             basePrice +
