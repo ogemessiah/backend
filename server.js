@@ -55,14 +55,14 @@ app.get('/', (req, res) => {
 app.get('/app/version', (req, res) => {
   res.json({
     ios: {
-      minimumVersion: '1.0.1',
-      latestVersion: '1.0.1',
+      minimumVersion: '1.0.0',
+      latestVersion: '1.0.0',
       storeUrl: 'https://apps.apple.com/app/tunnelmouth/id6811357387'
     },
 
     android: {
-      minimumVersion: '1.0.1',
-      latestVersion: '1.0.1',
+      minimumVersion: '1.0.0',
+      latestVersion: '1.0.0',
       storeUrl: 'https://play.google.com/store/apps/details?id=com.tunnelmouth.customer'
     }
   });
