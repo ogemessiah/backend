@@ -5201,7 +5201,7 @@ router.post('/subscribe-pro', async (req, res) => {
       });
     }
 
-    const PRO_PRICE = 1500;
+    const PRO_PRICE = 900;
 
     const userRef = db.collection('users').doc(userId);
 
@@ -5277,6 +5277,8 @@ router.post('/subscribe-pro', async (req, res) => {
         walletLastUpdated: admin.firestore.FieldValue.serverTimestamp(),
 
         proActive: true,
+
+        proAutoRenew: true,
 
         proStartedAt:
           admin.firestore.Timestamp.fromDate(startedAt),
