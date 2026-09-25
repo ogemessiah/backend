@@ -36,6 +36,40 @@ const formatNigerianPhone = (phone) => {
 
 const router = express.Router();
 
+
+const getActiveProDiscount = (userData, amount) => {
+  if (
+    userData?.proActive !== true ||
+    !userData?.proStartedAt ||
+    !userData?.proExpiresAt
+  ) {
+    return 0;
+  }
+
+  const startedAt =
+    typeof userData.proStartedAt.toDate === 'function'
+      ? userData.proStartedAt.toDate()
+      : new Date(userData.proStartedAt);
+
+  const expiresAt =
+    typeof userData.proExpiresAt.toDate === 'function'
+      ? userData.proExpiresAt.toDate()
+      : new Date(userData.proExpiresAt);
+
+  const now = Date.now();
+
+  if (
+    isNaN(startedAt.getTime()) ||
+    isNaN(expiresAt.getTime()) ||
+    startedAt.getTime() > now ||
+    expiresAt.getTime() <= now
+  ) {
+    return 0;
+  }
+
+  return Math.floor(amount * 0.03);
+};
+
 // =====================================================
 // REFERRAL REWARD
 // =====================================================
@@ -837,6 +871,8 @@ router.post('/verify-payment', async (req, res) => {
       }
     }
 
+    const priceAfterVoucher = finalPrice;
+
     // =========================
     // COURIER TYPE
     // =========================
@@ -969,6 +1005,39 @@ router.post('/verify-payment', async (req, res) => {
           const user =
             userSnap.data();
 
+          const proDiscount =
+            getActiveProDiscount(
+              user,
+              isTerminal
+                ? (
+                  Number(orderData.terminalQuote?.basePrice || 0) +
+                  Number(orderData.terminalQuote?.platformFee || 0) +
+                  Number(orderData.terminalQuote?.fixedFee || 0)
+                )
+                : originalPrice
+            );
+          
+          const customerFinalPrice =
+            Math.max(
+              priceAfterVoucher - proDiscount,
+              0
+            );
+
+          if (isTunnelMouth) {
+            platformFee =
+              customerFinalPrice -
+              driverEarning;
+          }
+
+          if (isTerminal) {
+            platformFee =
+              Math.max(
+                customerFinalPrice -
+                terminalBasePrice,
+                0
+              );
+          }
+
           // =========================
           // FIRST-TIME VOUCHER CHECK
           // =========================
@@ -1000,7 +1069,7 @@ router.post('/verify-payment', async (req, res) => {
           const walletUsed =
             Math.min(
               walletBalance,
-              finalPrice
+              customerFinalPrice
             );
 
           // =========================
@@ -1009,7 +1078,7 @@ router.post('/verify-payment', async (req, res) => {
           // =========================
 
           const amountExpected =
-            finalPrice -
+            customerFinalPrice -
             walletUsed;
 
           const customerPays =
@@ -1058,6 +1127,8 @@ router.post('/verify-payment', async (req, res) => {
               walletUsed,
 
               voucherDiscount,
+
+              proDiscount,
 
               driverEarning:
                 isTunnelMouth
@@ -1924,6 +1995,8 @@ router.post('/wallet-payment', async (req, res) => {
 
     }
 
+    const priceAfterVoucher = finalPrice;
+
 
     // =========================
     // COURIER TYPE
@@ -2048,6 +2121,40 @@ router.post('/wallet-payment', async (req, res) => {
           const user =
             userSnap.data();
 
+          const proDiscount =
+            getActiveProDiscount(
+              user,
+              isTerminal
+                ? (
+                  Number(orderData.terminalQuote?.basePrice || 0) +
+                  Number(orderData.terminalQuote?.platformFee || 0) +
+                  Number(orderData.terminalQuote?.fixedFee || 0)
+                )
+                : originalPrice
+              
+            );
+          
+          const customerFinalPrice =
+            Math.max(
+              priceAfterVoucher - proDiscount,
+              0
+            );
+
+          if (isTunnelMouth) {
+            platformFee =
+              customerFinalPrice - 
+              driverEarning;
+          }
+
+          if (isTerminal) {
+            platformFee =
+              Math.max(
+                customerFinalPrice -
+                terminalBasePrice,
+                0
+              );
+          }
+
           const walletBalance =
             Number(
               user.walletBalance || 0
@@ -2077,7 +2184,7 @@ router.post('/wallet-payment', async (req, res) => {
 
           if (
             walletBalance <
-            finalPrice
+            customerFinalPrice
           ) {
 
             throw new Error(
@@ -2097,7 +2204,7 @@ router.post('/wallet-payment', async (req, res) => {
 
               walletBalance:
                 admin.firestore.FieldValue
-                  .increment(-finalPrice),
+                  .increment(-customerFinalPrice),
 
               hasPlacedFirstOrder:
                 true,
@@ -2126,9 +2233,11 @@ router.post('/wallet-payment', async (req, res) => {
                 0,
 
               walletUsed:
-                finalPrice,
+                customerFinalPrice,
 
               voucherDiscount,
+
+              proDiscount,
 
               driverEarning,
 
@@ -2210,7 +2319,7 @@ router.post('/wallet-payment', async (req, res) => {
                 'debit',
 
               amount:
-                finalPrice,
+                customerFinalPrice,
 
               description:
                 'Wallet payment',

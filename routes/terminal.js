@@ -592,7 +592,7 @@ router.post('/quote', async (req, res) => {
     // =========================
     // ADD TUNNELMOUTH FEE
     //
-    // 5% + ₦500
+    // 5% + ₦700
     // =========================
 
     const quotes =
