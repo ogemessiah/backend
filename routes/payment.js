@@ -5077,4 +5077,167 @@ router.get('/paystack-cancel', (req, res) => {
 
 });
 
+// =====================================================
+// SUBSCRIBE TO TUNNELMOUTH PRO
+// =====================================================
+
+router.post('/subscribe-pro', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId is required.'
+      });
+    }
+
+    const PRO_PRICE = 1500;
+
+    const userRef = db.collection('users').doc(userId);
+
+    const result = await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+
+      if (!userSnapshot.exists) {
+        throw new Error('Customer account not found.');
+      }
+
+      const userData = userSnapshot.data();
+
+      const walletBalance =
+        Number(userData.walletBalance || 0);
+
+      const proActive =
+        userData.proActive === true;
+
+      let currentExpiry = null;
+
+      if (userData.proExpiresAt) {
+        if (typeof userData.proExpiresAt.toDate === 'function') {
+          currentExpiry = userData.proExpiresAt.toDate();
+        } else {
+          currentExpiry = new Date(userData.proExpiresAt);
+        }
+      }
+
+      // -------------------------------------------------
+      // ALREADY ACTIVE
+      // -------------------------------------------------
+
+      if (
+        proActive &&
+        currentExpiry &&
+        currentExpiry.getTime() > Date.now()
+      ) {
+        return {
+          alreadyActive: true,
+          walletBalance,
+          proExpiresAt: currentExpiry
+        };
+      }
+
+      // -------------------------------------------------
+      // INSUFFICIENT WALLET BALANCE
+      // -------------------------------------------------
+
+      if (walletBalance < PRO_PRICE) {
+        throw new Error(
+          `Insufficient wallet balance. You need ₦${PRO_PRICE.toLocaleString('en-NG')} to subscribe to Pro.`
+        );
+      }
+
+      // -------------------------------------------------
+      // SUBSCRIPTION DATES
+      // -------------------------------------------------
+
+      const startedAt = new Date();
+
+      const expiresAt = new Date(startedAt);
+      expiresAt.setMonth(expiresAt.getMonth() + 1);
+
+      const newWalletBalance =
+        walletBalance - PRO_PRICE;
+
+      // -------------------------------------------------
+      // UPDATE USER
+      // -------------------------------------------------
+
+      transaction.update(userRef, {
+        walletBalance: newWalletBalance,
+        walletLastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+
+        proActive: true,
+
+        proStartedAt:
+          admin.firestore.Timestamp.fromDate(startedAt),
+
+        proExpiresAt:
+          admin.firestore.Timestamp.fromDate(expiresAt)
+      });
+
+      // -------------------------------------------------
+      // WALLET TRANSACTION
+      // -------------------------------------------------
+
+      const walletTransactionRef =
+        db.collection('wallet_transactions').doc();
+
+      transaction.set(walletTransactionRef, {
+        userId,
+
+        type: 'debit',
+
+        amount: PRO_PRICE,
+
+        description: 'TunnelMouth Pro subscription',
+
+        createdAt:
+          admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      return {
+        alreadyActive: false,
+        walletBalance: newWalletBalance,
+        proStartedAt: startedAt,
+        proExpiresAt: expiresAt
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: result.alreadyActive
+        ? 'TunnelMouth Pro is already active.'
+        : 'TunnelMouth Pro activated successfully.',
+
+      alreadyActive: result.alreadyActive,
+
+      walletBalance: result.walletBalance,
+
+      proStartedAt:
+        result.proStartedAt
+          ? result.proStartedAt.toISOString()
+          : null,
+
+      proExpiresAt:
+        result.proExpiresAt
+          ? result.proExpiresAt.toISOString()
+          : null
+    });
+
+  } catch (error) {
+    console.error(
+      'Subscribe Pro error:',
+      error
+    );
+
+    return res.status(400).json({
+      success: false,
+      message:
+        error.message ||
+        'Unable to subscribe to TunnelMouth Pro.'
+    });
+  }
+});
+
 module.exports = router;
