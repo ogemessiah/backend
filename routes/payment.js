@@ -5351,185 +5351,339 @@ router.post('/subscribe-pro', async (req, res) => {
   }
 });
 
+
+
 // =====================================================
-// AUTO-RENEW TUNNELMOUTH PRO
+// AUTO-RENEW TUNNELMOUTH PRO FROM WALLET
 // =====================================================
 
 router.post('/renew-pro', async (req, res) => {
   try {
-    const { userId } = req.body;
+    // =====================================================
+    // 1. VERIFY FIREBASE AUTHENTICATION
+    // =====================================================
 
-    if (!userId) {
-      return res.status(400).json({
+    const authHeader =
+      req.headers.authorization;
+
+    if (
+      !authHeader ||
+      !authHeader.startsWith('Bearer ')
+    ) {
+      return res.status(401).json({
         success: false,
-        message: 'userId is required.'
+        message: 'Authentication required.'
       });
     }
 
+    const idToken =
+      authHeader.substring(7).trim();
+
+    if (!idToken) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication token is missing.'
+      });
+    }
+
+    let decodedToken;
+
+    try {
+      decodedToken =
+        await admin.auth().verifyIdToken(idToken);
+    } catch (error) {
+      console.error(
+        'Renew Pro token verification error:',
+        error
+      );
+
+      return res.status(401).json({
+        success: false,
+        message:
+          'Invalid or expired authentication token.'
+      });
+    }
+
+    // IMPORTANT:
+    // Never accept userId from req.body.
+    // Firebase Authentication is the source of truth.
+    const userId = decodedToken.uid;
+
+
+    // =====================================================
+    // 2. CONSTANTS
+    // =====================================================
+
     const PRO_PRICE = 900;
+
+
+    // =====================================================
+    // 3. USER REFERENCE
+    // =====================================================
 
     const userRef =
       db.collection('users').doc(userId);
 
-    const result = await db.runTransaction(
-      async (transaction) => {
 
-        const userSnapshot =
-          await transaction.get(userRef);
+    // =====================================================
+    // 4. ATOMIC FIRESTORE TRANSACTION
+    // =====================================================
 
-        if (!userSnapshot.exists) {
-          throw new Error(
-            'Customer account not found.'
-          );
-        }
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
 
-        const userData =
-          userSnapshot.data();
+          const userSnapshot =
+            await transaction.get(userRef);
 
-        // -------------------------------------------------
-        // CHECK AUTO-RENEW
-        // -------------------------------------------------
 
-        if (userData.proAutoRenew !== true) {
-          return {
-            renewed: false,
-            reason: 'Auto-renew is not enabled.'
-          };
-        }
+          // -------------------------------------------------
+          // CUSTOMER ACCOUNT MUST EXIST
+          // -------------------------------------------------
 
-        // -------------------------------------------------
-        // GET EXPIRY
-        // -------------------------------------------------
+          if (!userSnapshot.exists) {
+            throw new Error(
+              'Customer account not found.'
+            );
+          }
 
-        let expiresAt = null;
 
-        if (userData.proExpiresAt) {
+          const userData =
+            userSnapshot.data();
+
+
+          // -------------------------------------------------
+          // AUTO-RENEW MUST BE ENABLED
+          // -------------------------------------------------
+
           if (
-            typeof userData.proExpiresAt.toDate ===
-            'function'
+            userData.proAutoRenew !== true
           ) {
-            expiresAt =
-              userData.proExpiresAt.toDate();
-          } else {
-            expiresAt =
-              new Date(userData.proExpiresAt);
+            return {
+              renewed: false,
+
+              reason:
+                'Auto-renew is not enabled.'
+            };
           }
-        }
 
-        // -------------------------------------------------
-        // ONLY RENEW AFTER EXPIRY
-        // -------------------------------------------------
 
-        if (
-          !expiresAt ||
-          isNaN(expiresAt.getTime()) ||
-          expiresAt.getTime() > Date.now()
-        ) {
+          // -------------------------------------------------
+          // READ CURRENT PRO EXPIRY
+          // -------------------------------------------------
+
+          let expiresAt = null;
+
+          if (userData.proExpiresAt) {
+
+            if (
+              typeof userData.proExpiresAt.toDate ===
+              'function'
+            ) {
+              expiresAt =
+                userData.proExpiresAt.toDate();
+            } else {
+              expiresAt =
+                new Date(
+                  userData.proExpiresAt
+                );
+            }
+          }
+
+
+          // -------------------------------------------------
+          // VALIDATE EXPIRY DATE
+          // -------------------------------------------------
+
+          if (
+            !expiresAt ||
+            isNaN(expiresAt.getTime())
+          ) {
+            return {
+              renewed: false,
+
+              reason:
+                'Pro expiry date is invalid.'
+            };
+          }
+
+
+          // -------------------------------------------------
+          // PRO HAS NOT EXPIRED YET
+          // -------------------------------------------------
+
+          if (
+            expiresAt.getTime() > Date.now()
+          ) {
+            return {
+              renewed: false,
+
+              reason:
+                'Pro subscription has not expired.'
+            };
+          }
+
+
+          // -------------------------------------------------
+          // READ AND VALIDATE WALLET BALANCE
+          // -------------------------------------------------
+
+          const walletBalanceRaw =
+            Number(
+              userData.walletBalance || 0
+            );
+
+          const walletBalance =
+            Number.isFinite(
+              walletBalanceRaw
+            ) &&
+            walletBalanceRaw > 0
+              ? walletBalanceRaw
+              : 0;
+
+
+          // -------------------------------------------------
+          // INSUFFICIENT FUNDS
+          // -------------------------------------------------
+
+          if (
+            walletBalance < PRO_PRICE
+          ) {
+
+            transaction.update(
+              userRef,
+              {
+                proActive: false,
+
+                proRenewalFailedAt:
+                  admin.firestore.FieldValue
+                    .serverTimestamp()
+              }
+            );
+
+            return {
+              renewed: false,
+
+              reason:
+                'Insufficient wallet balance.',
+
+              walletBalance
+            };
+          }
+
+
+          // =================================================
+          // RENEW PRO
+          // =================================================
+
+          const startedAt =
+            new Date();
+
+
+          const newExpiresAt =
+            new Date(startedAt);
+
+
+          newExpiresAt.setMonth(
+            newExpiresAt.getMonth() + 1
+          );
+
+
+          const newWalletBalance =
+            walletBalance - PRO_PRICE;
+
+
+          // -------------------------------------------------
+          // UPDATE CUSTOMER
+          // -------------------------------------------------
+
+          transaction.update(
+            userRef,
+            {
+              walletBalance:
+                newWalletBalance,
+
+              walletLastUpdated:
+                admin.firestore.FieldValue
+                  .serverTimestamp(),
+
+              proActive: true,
+
+              proAutoRenew: true,
+
+              proStartedAt:
+                admin.firestore.Timestamp
+                  .fromDate(
+                    startedAt
+                  ),
+
+              proExpiresAt:
+                admin.firestore.Timestamp
+                  .fromDate(
+                    newExpiresAt
+                  ),
+
+              proRenewalFailedAt:
+                admin.firestore.FieldValue
+                  .delete()
+            }
+          );
+
+
+          // -------------------------------------------------
+          // CREATE WALLET TRANSACTION
+          // -------------------------------------------------
+
+          const walletTransactionRef =
+            db
+              .collection(
+                'wallet_transactions'
+              )
+              .doc();
+
+
+          transaction.set(
+            walletTransactionRef,
+            {
+              userId,
+
+              type: 'debit',
+
+              amount: PRO_PRICE,
+
+              description:
+                'TunnelMouth Pro auto-renewal',
+
+              createdAt:
+                admin.firestore.FieldValue
+                  .serverTimestamp()
+            }
+          );
+
+
+          // -------------------------------------------------
+          // RETURN RESULT
+          // -------------------------------------------------
+
           return {
-            renewed: false,
-            reason: 'Pro subscription has not expired.'
+            renewed: true,
+
+            walletBalance:
+              newWalletBalance,
+
+            proStartedAt:
+              startedAt,
+
+            proExpiresAt:
+              newExpiresAt
           };
         }
+      );
 
-        // -------------------------------------------------
-        // CHECK WALLET
-        // -------------------------------------------------
 
-        const walletBalance =
-          Number(userData.walletBalance || 0);
-
-        if (walletBalance < PRO_PRICE) {
-          return {
-            renewed: false,
-            reason: 'Insufficient wallet balance.',
-            walletBalance
-          };
-        }
-
-        // -------------------------------------------------
-        // NEW SUBSCRIPTION PERIOD
-        // -------------------------------------------------
-
-        const startedAt =
-          new Date();
-
-        const newExpiresAt =
-          new Date(startedAt);
-
-        newExpiresAt.setMonth(
-          newExpiresAt.getMonth() + 1
-        );
-
-        const newWalletBalance =
-          walletBalance - PRO_PRICE;
-
-        // -------------------------------------------------
-        // UPDATE USER
-        // -------------------------------------------------
-
-        transaction.update(userRef, {
-
-          walletBalance:
-            newWalletBalance,
-
-          walletLastUpdated:
-            admin.firestore.FieldValue
-              .serverTimestamp(),
-
-          proActive: true,
-
-          proAutoRenew: true,
-
-          proStartedAt:
-            admin.firestore.Timestamp
-              .fromDate(startedAt),
-
-          proExpiresAt:
-            admin.firestore.Timestamp
-              .fromDate(newExpiresAt)
-        });
-
-        // -------------------------------------------------
-        // WALLET TRANSACTION
-        // -------------------------------------------------
-
-        const walletTransactionRef =
-          db.collection(
-            'wallet_transactions'
-          ).doc();
-
-        transaction.set(
-          walletTransactionRef,
-          {
-            userId,
-
-            type: 'debit',
-
-            amount: PRO_PRICE,
-
-            description:
-              'TunnelMouth Pro auto-renewal',
-
-            createdAt:
-              admin.firestore.FieldValue
-                .serverTimestamp()
-          }
-        );
-
-        return {
-          renewed: true,
-
-          walletBalance:
-            newWalletBalance,
-
-          proStartedAt:
-            startedAt,
-
-          proExpiresAt:
-            newExpiresAt
-        };
-      }
-    );
+    // =====================================================
+    // 5. SUCCESS RESPONSE
+    // =====================================================
 
     return res.status(200).json({
       success: true,
@@ -5541,7 +5695,7 @@ router.post('/renew-pro', async (req, res) => {
         result.reason || null,
 
       walletBalance:
-        result.walletBalance,
+        result.walletBalance ?? null,
 
       proStartedAt:
         result.proStartedAt
@@ -5554,7 +5708,12 @@ router.post('/renew-pro', async (req, res) => {
           : null
     });
 
+
   } catch (error) {
+
+    // =====================================================
+    // 6. ERROR HANDLING
+    // =====================================================
 
     console.error(
       'Renew Pro error:',
