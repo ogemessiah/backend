@@ -13,6 +13,7 @@
     "express": "^4.22.2",
     "firebase-admin": "^12.7.0",
     "google-auth-library": "^10.9.0",
+    "openai": "^7.23.0",
     "resend": "^6.18.1"
   },
   "devDependencies": {
