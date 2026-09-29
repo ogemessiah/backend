@@ -244,7 +244,6 @@ Delivery prices depend on factors such as:
 - Pickup location
 - Drop-off location
 - Distance
-- Package size
 - Courier
 - Current courier pricing
 
