@@ -11,6 +11,8 @@ const tunnelmouthRoutes = require('./routes/tunnelmouth');
 
 const adminNotificationsRoutes = require('./routes/adminNotifications');
 
+const aiRoutes = require('./routes/ai');
+
 const app = express();
 
 // =========================
@@ -41,6 +43,7 @@ app.use('/auth', authRoutes);
 app.use('/terminal', terminalRoutes);
 app.use('/tunnelmouth', tunnelmouthRoutes);
 app.use('/admin-notifications', adminNotificationsRoutes);
+app.use('/ai', aiRoutes);
 
 // =========================
 // HEALTH CHECK
