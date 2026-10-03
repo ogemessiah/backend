@@ -11,6 +11,7 @@
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
+    "express-rate-limit": "^8.7.0",
     "firebase-admin": "^12.7.0",
     "google-auth-library": "^10.9.0",
     "openai": "^7.23.0",

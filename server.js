@@ -15,6 +15,8 @@ const aiRoutes = require('./routes/ai');
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 // =========================
 // MIDDLEWARE
 // =========================
