@@ -204,8 +204,7 @@ app.get(
 
       if (
         !placeId ||
-        placeId.length > 500 ||
-        !/^[A-Za-z0-9_-]+$/.test(placeId)
+        placeId.length > 500
       ) {
         return res.status(400).json({
           success: false,
