@@ -34,6 +34,30 @@ const distanceLimiter = rateLimit({
   }
 });
 
+// Google Places Autocomplete: 30 requests per IP per 15 minutes
+const placesAutocompleteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many address searches. Please try again later.'
+  }
+});
+
+// Google Places Details: 30 requests per IP per 15 minutes
+const placesDetailsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many address detail requests. Please try again later.'
+  }
+});
+
 // =========================
 // MIDDLEWARE
 // =========================
@@ -98,6 +122,148 @@ app.post('/distance', distanceLimiter, async (req, res) => {
   const data = await response.json();
   res.json(data);  
 }
+);
+
+// =========================
+// GOOGLE PLACES AUTOCOMPLETE
+// =========================
+app.get(
+  '/places/autocomplete',
+  placesAutocompleteLimiter,
+  async (req, res) => {
+    try {
+      const input = String(req.query.input || '').trim();
+
+      if (input.length < 2 || input.length > 200) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid address search.'
+        });
+      }
+
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+
+      if (!apiKey) {
+        console.error('GOOGLE_PLACES_API_KEY is not configured.');
+
+        return res.status(500).json({
+          success: false,
+          message: 'Address search is temporarily unavailable.'
+        });
+      }
+
+      const url = new URL(
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+      );
+
+      url.searchParams.set('input', input);
+      url.searchParams.set('components', 'country:ng');
+      url.searchParams.set('language', 'en');
+      url.searchParams.set('key', apiKey);
+
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!response.ok || data.status === 'REQUEST_DENIED') {
+        console.error('Google Places Autocomplete request failed:', {
+          httpStatus: response.status,
+          googleStatus: data.status,
+          errorMessage: data.error_message
+        });
+
+        return res.status(502).json({
+          success: false,
+          message: 'Address search is temporarily unavailable.'
+        });
+      }
+
+      return res.json({
+        success: true,
+        predictions: data.predictions || []
+      });
+    } catch (error) {
+      console.error('Places autocomplete error:', error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Unable to search for addresses.'
+      });
+    }
+  }
+);
+
+// =========================
+// GOOGLE PLACES DETAILS
+// =========================
+app.get(
+  '/places/details',
+  placesDetailsLimiter,
+  async (req, res) => {
+    try {
+      const placeId = String(req.query.place_id || '').trim();
+
+      if (
+        !placeId ||
+        placeId.length > 500 ||
+        !/^[A-Za-z0-9_-]+$/.test(placeId)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'A valid place ID is required.'
+        });
+      }
+
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+
+      if (!apiKey) {
+        console.error('GOOGLE_PLACES_API_KEY is not configured.');
+
+        return res.status(500).json({
+          success: false,
+          message: 'Address details are temporarily unavailable.'
+        });
+      }
+
+      const url = new URL(
+        'https://maps.googleapis.com/maps/api/place/details/json'
+      );
+
+      url.searchParams.set('place_id', placeId);
+      url.searchParams.set(
+        'fields',
+        'place_id,formatted_address,geometry,address_component,name'
+      );
+      url.searchParams.set('key', apiKey);
+
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!response.ok || data.status !== 'OK') {
+        console.error('Google Places Details request failed:', {
+          httpStatus: response.status,
+          googleStatus: data.status,
+          errorMessage: data.error_message
+        });
+
+        return res.status(502).json({
+          success: false,
+          message: 'Unable to retrieve the selected address.'
+        });
+      }
+
+      return res.json({
+        success: true,
+        result: data.result
+      });
+    } catch (error) {
+      console.error('Places details error:', error.message);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Unable to retrieve address details.'
+      });
+    }
+  }
 );
 
 // =========================
