@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const paymentRoutes = require('./routes/payment');
 
@@ -16,6 +17,22 @@ const aiRoutes = require('./routes/ai');
 const app = express();
 
 app.set('trust proxy', 1);
+
+// =========================
+// RATE LIMITERS
+// =========================
+
+// Distance Matrix: 15 requests per IP per hour
+const distanceLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 15,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many requests. Please try again later.'
+  }
+});
 
 // =========================
 // MIDDLEWARE
@@ -73,7 +90,7 @@ app.get('/app/version', (req, res) => {
   });
 });
 
-app.post('/distance', async (req, res) => {
+app.post('/distance', distanceLimiter, async (req, res) => {
   const {pickupCoords, dropoffCoords} = req.body;
   const url =
     `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${pickupCoords.lat},${pickupCoords.lng}&destinations=${dropoffCoords.lat},${dropoffCoords.lng}&key=${process.env.GOOGLE_API_KEY}`;
